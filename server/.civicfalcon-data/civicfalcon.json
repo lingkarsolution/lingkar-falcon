@@ -1,0 +1,739 @@
+{
+    "tenants": {
+        "ten_53128a68a1de466f": {
+            "id": "ten_53128a68a1de466f",
+            "name": "CivicFalcon Demo",
+            "slug": "civicfalcon-demo",
+            "createdAt": "2026-05-22T15:40:11.568Z",
+            "updatedAt": "2026-05-22T15:40:11.573Z"
+        }
+    },
+    "users": {
+        "usr_3cdf0cf4390e46f3": {
+            "id": "usr_3cdf0cf4390e46f3",
+            "tenantId": "ten_53128a68a1de466f",
+            "email": "admin@civicfalcon.local",
+            "name": "Admin",
+            "role": "admin",
+            "passwordHash": "8acfc67341d3fb15b5bc1baf6258b639:231398d0bf000bdd0218624ea7d6908455fb1934babb81674ac5cfcbe4cd3bafefa160b3fe64a0865b98aacf70e59b0be63edcc86df64a52c672570ef26da78b",
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        }
+    },
+    "topics": {
+        "topic_43d0c91efc0746b8": {
+            "id": "topic_43d0c91efc0746b8",
+            "tenantId": "ten_53128a68a1de466f",
+            "title": "Public Conversation: Economic Policy",
+            "description": "Sample topic with synthetic mentions. Replace with your own once connectors are live.",
+            "category": "Politics",
+            "keywords": [
+                "economy",
+                "inflation",
+                "policy",
+                "ekonomi",
+                "inflasi",
+                "kebijakan"
+            ],
+            "excludeKeywords": [
+                "joke",
+                "parody"
+            ],
+            "platforms": [
+                "gdelt",
+                "rss",
+                "web",
+                "reddit",
+                "news"
+            ],
+            "languages": [
+                "en",
+                "id"
+            ],
+            "regions": [
+                "ID",
+                "US"
+            ],
+            "status": "active",
+            "collectionFrequencyMinutes": 60,
+            "createdBy": "usr_3cdf0cf4390e46f3",
+            "createdAt": "2026-05-22T15:40:11.636Z",
+            "updatedAt": "2026-05-22T15:40:11.636Z"
+        }
+    },
+    "connectors": {
+        "conn_0b7170f3b2df4198": {
+            "id": "conn_0b7170f3b2df4198",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "gdelt",
+            "name": "GDELT (Global news)",
+            "mode": "free",
+            "status": "active",
+            "enabled": true,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_163b86c17e3c4c2e": {
+            "id": "conn_163b86c17e3c4c2e",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "rss",
+            "name": "RSS Feeds",
+            "mode": "free",
+            "status": "active",
+            "enabled": true,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_4800a06f45b8481b": {
+            "id": "conn_4800a06f45b8481b",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "web",
+            "name": "Web Search (Brave/DDG/SearXNG)",
+            "mode": "free",
+            "status": "active",
+            "enabled": true,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": 25,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_bde7dd102e5340f6": {
+            "id": "conn_bde7dd102e5340f6",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "reddit",
+            "name": "Reddit Public JSON",
+            "mode": "free",
+            "status": "active",
+            "enabled": true,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_5deaf034758244bb": {
+            "id": "conn_5deaf034758244bb",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "youtube",
+            "name": "YouTube Data API v3",
+            "mode": "official_api",
+            "status": "not_configured",
+            "enabled": false,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": 0,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_e53d94ee61314ce1": {
+            "id": "conn_e53d94ee61314ce1",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "x",
+            "name": "X API v2 (paid)",
+            "mode": "paid_api",
+            "status": "not_configured",
+            "enabled": false,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": 100,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_1c9b26f0556a4bdf": {
+            "id": "conn_1c9b26f0556a4bdf",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "facebook",
+            "name": "Facebook Pages API",
+            "mode": "official_api",
+            "status": "not_configured",
+            "enabled": false,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_95431fd2e06f4915": {
+            "id": "conn_95431fd2e06f4915",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "instagram",
+            "name": "Instagram Graph API",
+            "mode": "official_api",
+            "status": "not_configured",
+            "enabled": false,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.635Z",
+            "updatedAt": "2026-05-22T15:40:11.635Z"
+        },
+        "conn_e4af02aaa05a43f9": {
+            "id": "conn_e4af02aaa05a43f9",
+            "tenantId": "ten_53128a68a1de466f",
+            "platform": "tiktok",
+            "name": "TikTok (provider/manual)",
+            "mode": "disabled",
+            "status": "disabled",
+            "enabled": false,
+            "credentialConfigured": false,
+            "rateLimitPerMinute": null,
+            "dailyRequestLimit": null,
+            "monthlyBudgetUsd": null,
+            "currentMonthSpendUsd": 0,
+            "currentMonthRequests": 0,
+            "lastHealthCheckAt": null,
+            "lastHealthMessage": null,
+            "createdAt": "2026-05-22T15:40:11.636Z",
+            "updatedAt": "2026-05-22T15:40:11.636Z"
+        }
+    },
+    "credentials": {},
+    "connectorUsageEvents": {},
+    "ingestionJobs": {},
+    "ingestionJobErrors": {},
+    "mentions": {
+        "mention_2ea7deda5f5841d7": {
+            "id": "mention_2ea7deda5f5841d7",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "news",
+            "sourceType": "social_post",
+            "sourceId": "mention_2ea7deda5f5841d7",
+            "sourceUrl": "https://example.com/mention_2ea7deda5f5841d7",
+            "sourceUrlHash": "mention_2ea7deda5f5841d7",
+            "title": "The new economic policy aims to curb inflation thr",
+            "text": "The new economic policy aims to curb inflation through targeted subsidies. Analysts call it a meaningful breakthrough.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_552",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 34243,
+                "verified": false
+            },
+            "publishedAt": "2026-05-22T13:40:11.636Z",
+            "collectedAt": "2026-05-22T13:40:11.636Z",
+            "metrics": {
+                "views": 5193,
+                "likes": 275,
+                "comments": 27,
+                "shares": 22,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 324,
+                "reachEstimate": 65644
+            },
+            "nlp": {
+                "sentiment": "positive",
+                "sentimentConfidence": 0.8833333333333333,
+                "emotions": [],
+                "intent": null,
+                "entities": [
+                    {
+                        "text": "The",
+                        "normalizedName": "The",
+                        "type": "other",
+                        "confidence": 0.6
+                    },
+                    {
+                        "text": "Analysts",
+                        "normalizedName": "Analysts",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.6,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-22T13:40:11.636Z",
+            "updatedAt": "2026-05-22T13:40:11.636Z"
+        },
+        "mention_2b938b69de86492f": {
+            "id": "mention_2b938b69de86492f",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "reddit",
+            "sourceType": "comment",
+            "sourceId": "mention_2b938b69de86492f",
+            "sourceUrl": "https://example.com/mention_2b938b69de86492f",
+            "sourceUrlHash": "mention_2b938b69de86492f",
+            "title": "Many citizens complain about rising prices despite",
+            "text": "Many citizens complain about rising prices despite the government claims of growth. Critics blame the central bank.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_397",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 18073,
+                "verified": false
+            },
+            "publishedAt": "2026-05-22T11:40:11.636Z",
+            "collectedAt": "2026-05-22T11:40:11.636Z",
+            "metrics": {
+                "views": 21561,
+                "likes": 115,
+                "comments": 13,
+                "shares": 11,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 139,
+                "reachEstimate": 18065
+            },
+            "nlp": {
+                "sentiment": "mixed",
+                "sentimentConfidence": 0.55,
+                "emotions": [],
+                "intent": "complaint",
+                "entities": [
+                    {
+                        "text": "Many",
+                        "normalizedName": "Many",
+                        "type": "other",
+                        "confidence": 0.6
+                    },
+                    {
+                        "text": "Critics",
+                        "normalizedName": "Critics",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.4,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-22T11:40:11.636Z",
+            "updatedAt": "2026-05-22T11:40:11.636Z"
+        },
+        "mention_5b73789b48904296": {
+            "id": "mention_5b73789b48904296",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "news",
+            "sourceType": "news_article",
+            "sourceId": "mention_5b73789b48904296",
+            "sourceUrl": "https://example.com/mention_5b73789b48904296",
+            "sourceUrlHash": "mention_5b73789b48904296",
+            "title": "Excellent quarterly results from major corporation",
+            "text": "Excellent quarterly results from major corporations support the positive economic outlook.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_912",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 48272,
+                "verified": false
+            },
+            "publishedAt": "2026-05-22T09:40:11.637Z",
+            "collectedAt": "2026-05-22T09:40:11.637Z",
+            "metrics": {
+                "views": 29078,
+                "likes": 389,
+                "comments": 23,
+                "shares": 39,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 451,
+                "reachEstimate": 29794
+            },
+            "nlp": {
+                "sentiment": "positive",
+                "sentimentConfidence": 0.95,
+                "emotions": [],
+                "intent": null,
+                "entities": [
+                    {
+                        "text": "Excellent",
+                        "normalizedName": "Excellent",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.4,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-22T09:40:11.637Z",
+            "updatedAt": "2026-05-22T09:40:11.637Z"
+        },
+        "mention_5aca584bd5804887": {
+            "id": "mention_5aca584bd5804887",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "rss",
+            "sourceType": "rss_item",
+            "sourceId": "mention_5aca584bd5804887",
+            "sourceUrl": "https://example.com/mention_5aca584bd5804887",
+            "sourceUrlHash": "mention_5aca584bd5804887",
+            "title": "Kebijakan ekonomi baru mendapat kritik dari sejuml",
+            "text": "Kebijakan ekonomi baru mendapat kritik dari sejumlah pengamat karena dianggap tidak konsisten.",
+            "language": "id",
+            "author": {
+                "username": "sample_user_904",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 10578,
+                "verified": false
+            },
+            "publishedAt": "2026-05-22T06:40:11.637Z",
+            "collectedAt": "2026-05-22T06:40:11.637Z",
+            "metrics": {
+                "views": 26923,
+                "likes": 471,
+                "comments": 90,
+                "shares": 29,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 590,
+                "reachEstimate": 84437
+            },
+            "nlp": {
+                "sentiment": "negative",
+                "sentimentConfidence": 0.8833333333333333,
+                "emotions": [],
+                "intent": "question",
+                "entities": [
+                    {
+                        "text": "Kebijakan",
+                        "normalizedName": "Kebijakan",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.6,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-22T06:40:11.637Z",
+            "updatedAt": "2026-05-22T06:40:11.637Z"
+        },
+        "mention_f8598a5c50484e2b": {
+            "id": "mention_f8598a5c50484e2b",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "gdelt",
+            "sourceType": "news_article",
+            "sourceId": "mention_f8598a5c50484e2b",
+            "sourceUrl": "https://example.com/mention_f8598a5c50484e2b",
+            "sourceUrlHash": "mention_f8598a5c50484e2b",
+            "title": "Inflation crisis deepens — protests reported acros",
+            "text": "Inflation crisis deepens — protests reported across several cities.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_418",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 28313,
+                "verified": false
+            },
+            "publishedAt": "2026-05-22T01:40:11.637Z",
+            "collectedAt": "2026-05-22T01:40:11.637Z",
+            "metrics": {
+                "views": 21105,
+                "likes": 180,
+                "comments": 14,
+                "shares": 42,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 236,
+                "reachEstimate": 32852
+            },
+            "nlp": {
+                "sentiment": "negative",
+                "sentimentConfidence": 0.95,
+                "emotions": [],
+                "intent": "complaint",
+                "entities": [
+                    {
+                        "text": "Inflation",
+                        "normalizedName": "Inflation",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.5,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-22T01:40:11.637Z",
+            "updatedAt": "2026-05-22T01:40:11.637Z"
+        },
+        "mention_199159f9a1474fbd": {
+            "id": "mention_199159f9a1474fbd",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "web",
+            "sourceType": "web_page",
+            "sourceId": "mention_199159f9a1474fbd",
+            "sourceUrl": "https://example.com/mention_199159f9a1474fbd",
+            "sourceUrlHash": "mention_199159f9a1474fbd",
+            "title": "Support for the latest economic stimulus reaches a",
+            "text": "Support for the latest economic stimulus reaches a new high in polls.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_846",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 38911,
+                "verified": false
+            },
+            "publishedAt": "2026-05-21T15:40:11.637Z",
+            "collectedAt": "2026-05-21T15:40:11.637Z",
+            "metrics": {
+                "views": 6512,
+                "likes": 253,
+                "comments": 43,
+                "shares": 34,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 330,
+                "reachEstimate": 49705
+            },
+            "nlp": {
+                "sentiment": "positive",
+                "sentimentConfidence": 0.8833333333333333,
+                "emotions": [],
+                "intent": null,
+                "entities": [
+                    {
+                        "text": "Support",
+                        "normalizedName": "Support",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.4,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-21T15:40:11.637Z",
+            "updatedAt": "2026-05-21T15:40:11.637Z"
+        },
+        "mention_e08295a6ace949c3": {
+            "id": "mention_e08295a6ace949c3",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "news",
+            "sourceType": "news_article",
+            "sourceId": "mention_e08295a6ace949c3",
+            "sourceUrl": "https://example.com/mention_e08295a6ace949c3",
+            "sourceUrlHash": "mention_e08295a6ace949c3",
+            "title": "Scandal over policy transparency erupts after a le",
+            "text": "Scandal over policy transparency erupts after a leaked memo surfaces. Public outrage grows.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_114",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 45356,
+                "verified": false
+            },
+            "publishedAt": "2026-05-21T21:40:11.637Z",
+            "collectedAt": "2026-05-21T21:40:11.637Z",
+            "metrics": {
+                "views": 5637,
+                "likes": 310,
+                "comments": 76,
+                "shares": 40,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 426,
+                "reachEstimate": 65738
+            },
+            "nlp": {
+                "sentiment": "negative",
+                "sentimentConfidence": 0.8833333333333333,
+                "emotions": [
+                    "anger"
+                ],
+                "intent": null,
+                "entities": [
+                    {
+                        "text": "Scandal",
+                        "normalizedName": "Scandal",
+                        "type": "other",
+                        "confidence": 0.6
+                    },
+                    {
+                        "text": "Public",
+                        "normalizedName": "Public",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.5,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-21T21:40:11.637Z",
+            "updatedAt": "2026-05-21T21:40:11.637Z"
+        },
+        "mention_2f9205840e3e44ff": {
+            "id": "mention_2f9205840e3e44ff",
+            "tenantId": "ten_53128a68a1de466f",
+            "topicId": "topic_43d0c91efc0746b8",
+            "platform": "rss",
+            "sourceType": "rss_item",
+            "sourceId": "mention_2f9205840e3e44ff",
+            "sourceUrl": "https://example.com/mention_2f9205840e3e44ff",
+            "sourceUrlHash": "mention_2f9205840e3e44ff",
+            "title": "Dukungan masyarakat terhadap program ekonomi menin",
+            "text": "Dukungan masyarakat terhadap program ekonomi meningkat menurut survei terbaru.",
+            "language": "en",
+            "author": {
+                "username": "sample_user_268",
+                "displayName": "Sample User",
+                "profileUrl": null,
+                "followersCount": 39681,
+                "verified": false
+            },
+            "publishedAt": "2026-05-21T03:40:11.640Z",
+            "collectedAt": "2026-05-21T03:40:11.640Z",
+            "metrics": {
+                "views": 31242,
+                "likes": 69,
+                "comments": 2,
+                "shares": 39,
+                "reposts": 0,
+                "quotes": 0,
+                "saves": 0,
+                "engagementTotal": 110,
+                "reachEstimate": 102026
+            },
+            "nlp": {
+                "sentiment": "positive",
+                "sentimentConfidence": 0.8833333333333333,
+                "emotions": [],
+                "intent": null,
+                "entities": [
+                    {
+                        "text": "Dukungan",
+                        "normalizedName": "Dukungan",
+                        "type": "other",
+                        "confidence": 0.6
+                    }
+                ],
+                "topics": [],
+                "summary": null
+            },
+            "quality": {
+                "isDuplicate": false,
+                "isIrrelevant": false,
+                "relevanceScore": 0.5,
+                "automationLikelihood": 0,
+                "sourceReliability": 0.7
+            },
+            "createdAt": "2026-05-21T03:40:11.640Z",
+            "updatedAt": "2026-05-21T03:40:11.640Z"
+        }
+    },
+    "insights": {},
+    "issueClusters": {},
+    "riskEvents": {},
+    "actors": {},
+    "alertRules": {},
+    "alertEvents": {},
+    "reports": {},
+    "auditLogs": {},
+    "sessions": {},
+    "conversations": {},
+    "conversationTurns": {},
+    "toolInvocations": {}
+}

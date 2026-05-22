@@ -1,0 +1,30 @@
+import type { FastifyInstance } from 'fastify';
+import { registerAuthRoutes } from './auth.js';
+import { registerDashboardRoutes } from './dashboard.js';
+import { registerTopicRoutes } from './topics.js';
+import { registerConnectorRoutes } from './connectors.js';
+import { registerIngestionRoutes } from './ingestion.js';
+import { registerMentionRoutes } from './mentions.js';
+import { registerAnalyticsRoutes } from './analytics.js';
+import { registerAIRoutes } from './ai.js';
+import { registerAlertRoutes } from './alerts.js';
+import { registerReportRoutes } from './reports.js';
+import { registerActorRoutes } from './actors.js';
+import { registerAuditRoutes } from './audit.js';
+import { registerCommanderRoutes } from './commander.js';
+
+export const registerV1Routes = async (app: FastifyInstance) => {
+  await app.register(async (a) => registerAuthRoutes(a), { prefix: '/auth' });
+  await app.register(async (a) => registerDashboardRoutes(a), { prefix: '/dashboard' });
+  await app.register(async (a) => registerTopicRoutes(a), { prefix: '/topics' });
+  await app.register(async (a) => registerConnectorRoutes(a), { prefix: '/connectors' });
+  await app.register(async (a) => registerIngestionRoutes(a), { prefix: '/ingestion' });
+  await app.register(async (a) => registerMentionRoutes(a), { prefix: '/mentions' });
+  await app.register(async (a) => registerAnalyticsRoutes(a), { prefix: '/analytics' });
+  await app.register(async (a) => registerAIRoutes(a), { prefix: '/ai' });
+  await app.register(async (a) => registerAlertRoutes(a), { prefix: '/alerts' });
+  await app.register(async (a) => registerReportRoutes(a), { prefix: '/reports' });
+  await app.register(async (a) => registerActorRoutes(a), { prefix: '/actors' });
+  await app.register(async (a) => registerAuditRoutes(a), { prefix: '/audit' });
+  await app.register(async (a) => registerCommanderRoutes(a), { prefix: '/commander' });
+};
