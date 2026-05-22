@@ -34,6 +34,15 @@ export type Topic = {
   platforms: Platform[]; languages: string[]; regions: string[];
   status: TopicStatus;
   collectionFrequencyMinutes?: number | null;
+  intelligenceSettings?: {
+    lookbackDays?: number;
+    maxItemsPerConnector?: number;
+    dailyAnalysisEnabled?: boolean;
+    dailyAnalysisTime?: string;
+    timezone?: string;
+    trendingNewsEnabled?: boolean;
+    lastCycleRunAt?: string | null;
+  };
   createdBy?: string | null;
   createdAt: string; updatedAt: string;
 };
@@ -116,6 +125,7 @@ export type Mention = {
   };
   nlp: {
     sentiment: Sentiment; sentimentConfidence?: number | null;
+    sentimentSource?: 'heuristic' | 'llm' | null; sentimentAnalyzedAt?: string | null;
     emotions?: string[]; intent?: string | null;
     entities?: ExtractedEntity[]; topics?: string[]; summary?: string | null;
   };

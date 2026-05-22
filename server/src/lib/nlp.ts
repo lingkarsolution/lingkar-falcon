@@ -7,7 +7,10 @@ const POSITIVE = [
 ];
 const NEGATIVE = [
   'bad','terrible','awful','negative','hate','fail','failure','scandal','corruption','crisis','protest','attack','crash','decline','loss','accuse','blame',
+  'record low','new low','slid','slide','slump','slumped','plunge','plunged','falling','fell','dropped','drop','weaken','weakens','weakened','weaker',
+  'depreciation','depreciated','selloff','sell-off','tumble','tumbled','pressure','under pressure','stocks slumped','currency intervention',
   'buruk','gagal','korupsi','skandal','krisis','protes','tolak','kritik','negatif','rugi','jatuh','runtuh','demo',
+  'melemah','pelemahan','anjlok','merosot','terpuruk','ambles','tertekan','rekor terendah','intervensi',
 ];
 const ANGER = ['angry','rage','furious','outrage','marah','kesal','jengkel'];
 const FEAR = ['fear','scared','panic','takut','panik','khawatir'];

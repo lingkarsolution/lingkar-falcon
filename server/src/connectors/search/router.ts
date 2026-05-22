@@ -32,6 +32,16 @@ const FETCH_HEADERS: Record<string, string> = {
   'Upgrade-Insecure-Requests': '1',
 };
 
+const fetchWithTimeout = async (input: string | URL, init: RequestInit = {}, timeoutMs = 15_000): Promise<Response> => {
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: ac.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const decodeHtmlEntities = (value: string): string => value
   .replace(/&amp;/g, '&')
   .replace(/&lt;/g, '<')
@@ -77,7 +87,9 @@ export type SearchResult = {
 export type SearchOptions = {
   maxResults?: number; freshnessDays?: number;
   region?: string; safeSearch?: 'off' | 'moderate' | 'strict';
+  category?: 'general' | 'news';
   cacheTtlSec?: number;
+  provider?: 'auto' | 'searxng' | 'ddg_html' | 'ddg_ia' | 'brave' | 'tavily';
 };
 
 export interface WebSearchProvider {
@@ -98,7 +110,7 @@ class BraveProvider implements WebSearchProvider {
     url.searchParams.set('count', String(opts.maxResults ?? 10));
     if (opts.freshnessDays) url.searchParams.set('freshness', `pd${opts.freshnessDays}`);
     if (opts.safeSearch) url.searchParams.set('safesearch', opts.safeSearch);
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
       headers: { Accept: 'application/json', 'X-Subscription-Token': config.brave.apiKey },
     });
     if (!r.ok) throw new Error(`Brave HTTP ${r.status}`);
@@ -117,7 +129,7 @@ class DDGInstantProvider implements WebSearchProvider {
   isAvailable() { return true; }
   async search(query: string) {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const r = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } });
     if (!r.ok) throw new Error(`DDG IA HTTP ${r.status}`);
     const j: any = await r.json();
     const out: SearchResult[] = [];
@@ -143,7 +155,7 @@ class DDGHtmlProvider implements WebSearchProvider {
     const url = new URL('https://html.duckduckgo.com/html/');
     url.searchParams.set('q', query);
     if (opts.region) url.searchParams.set('kl', opts.region);
-    const r = await fetch(url, { method: 'GET', headers: DDG_HEADERS, redirect: 'follow' });
+    const r = await fetchWithTimeout(url, { method: 'GET', headers: DDG_HEADERS, redirect: 'follow' });
     if (!r.ok) throw new Error(`DDG HTML HTTP ${r.status}`);
     const html = await r.text();
     if (/anomaly|unusual traffic|captcha/i.test(html) && !/result__a/.test(html)) {
@@ -174,8 +186,15 @@ class SearxngProvider implements WebSearchProvider {
   isAvailable() { return Boolean(config.searxng.url); }
   async search(query: string, opts: SearchOptions) {
     const safe = opts.safeSearch === 'strict' ? 2 : opts.safeSearch === 'off' ? 0 : 1;
-    const url = `${config.searxng.url}/search?q=${encodeURIComponent(query)}&format=json&safesearch=${safe}`;
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const base = config.searxng.url.replace(/\/+$/, '');
+    const url = new URL(`${base}/search`);
+    url.searchParams.set('q', query);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('safesearch', String(safe));
+    url.searchParams.set('categories', opts.category === 'news' ? 'news' : 'general');
+    url.searchParams.set('language', opts.region?.toLowerCase().startsWith('id') ? 'id-ID' : 'all');
+    if (opts.maxResults) url.searchParams.set('pageno', '1');
+    const r = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 12_000);
     if (!r.ok) throw new Error(`SearXNG HTTP ${r.status}`);
     const j: any = await r.json();
     return (j.results ?? []).slice(0, opts.maxResults ?? 10).map((x: any) => ({
@@ -190,7 +209,7 @@ class TavilyProvider implements WebSearchProvider {
   costPerQueryUsd = 0.008;
   isAvailable() { return Boolean(config.tavily.apiKey); }
   async search(query: string, opts: SearchOptions) {
-    const r = await fetch('https://api.tavily.com/search', {
+    const r = await fetchWithTimeout('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -209,27 +228,36 @@ class TavilyProvider implements WebSearchProvider {
 
 const providers: WebSearchProvider[] = [
   new SearxngProvider(),
-  new DDGHtmlProvider(),
-  new DDGInstantProvider(),
   new BraveProvider(),
   new TavilyProvider(),
+  new DDGHtmlProvider(),
+  new DDGInstantProvider(),
 ];
 
+const autoProviderOrder = ['searxng', 'ddg_html', 'ddg_ia'];
+
 export const webSearch = async (query: string, opts: SearchOptions = {}): Promise<{
-  results: SearchResult[]; provider: string; cached: boolean;
+  results: SearchResult[]; provider: string; cached: boolean; errors?: string[];
 }> => {
   const cacheKey = `search:${sha256(JSON.stringify({ query, opts }))}`;
-  const hit = cache.get<{ results: SearchResult[]; provider: string }>(cacheKey);
+  const hit = cache.get<{ results: SearchResult[]; provider: string; errors?: string[] }>(cacheKey);
   if (hit) return { ...hit, cached: true };
 
   const minResults = 3;
   const errors: string[] = [];
-  for (const p of providers) {
+  const selectedProviders = opts.provider && opts.provider !== 'auto'
+    ? providers.filter((p) => p.name === opts.provider)
+    : autoProviderOrder
+      .map((name) => providers.find((p) => p.name === name))
+      .filter(Boolean) as WebSearchProvider[];
+  if (selectedProviders.length === 0) errors.push(`unknown provider: ${opts.provider}`);
+
+  for (const p of selectedProviders) {
     if (!p.isAvailable()) continue;
     try {
       const results = await p.search(query, opts);
-      if (results.length >= minResults || providers.indexOf(p) === providers.length - 1) {
-        const payload = { results, provider: p.name };
+      if (opts.provider || results.length >= minResults || selectedProviders.indexOf(p) === selectedProviders.length - 1) {
+        const payload = { results, provider: p.name, errors: errors.length ? errors : undefined };
         cache.set(cacheKey, payload, opts.cacheTtlSec ?? 21600);
         return { ...payload, cached: false };
       }
@@ -237,11 +265,17 @@ export const webSearch = async (query: string, opts: SearchOptions = {}): Promis
       errors.push(`${p.name}: ${(e as Error).message}`);
     }
   }
-  return { results: [], provider: 'none', cached: false };
+  return { results: [], provider: 'none', cached: false, errors };
 };
 
 export const searchProvidersStatus = () =>
-  providers.map((p) => ({ name: p.name, available: p.isAvailable(), costPerQueryUsd: p.costPerQueryUsd }));
+  providers.map((p) => ({
+    name: p.name,
+    available: p.isAvailable(),
+    costPerQueryUsd: p.costPerQueryUsd,
+    endpoint: p.name === 'searxng' && config.searxng.url ? config.searxng.url : undefined,
+    autoOrder: autoProviderOrder.includes(p.name) ? autoProviderOrder.indexOf(p.name) + 1 : undefined,
+  }));
 
 const FETCH_DEFAULT_CHARS = 8000;
 const FETCH_MAX_CHARS = 40000;

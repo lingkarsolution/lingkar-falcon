@@ -6,6 +6,15 @@ import type { Insight, Mention } from '../types.js';
 
 const now = () => new Date().toISOString();
 
+const parseJsonOutput = (content: string): unknown => {
+  const stripped = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  try { return JSON.parse(stripped); } catch {}
+  const start = stripped.indexOf('{');
+  const end = stripped.lastIndexOf('}');
+  if (start >= 0 && end > start) return JSON.parse(stripped.slice(start, end + 1));
+  throw new Error('LLM returned non-JSON daily brief output');
+};
+
 export const generateDailyBrief = async (tenantId: string, topicId: string): Promise<Insight | null> => {
   const topic = store.get('topics', topicId);
   if (!topic) return null;
@@ -26,7 +35,7 @@ export const generateDailyBrief = async (tenantId: string, topicId: string): Pro
       jsonMode: true,
     });
     const content = res.choices?.[0]?.message?.content ?? '{}';
-    parsed = JSON.parse(content);
+    parsed = parseJsonOutput(content);
   } catch {
     // LLM unavailable — fallback summary
     parsed = {

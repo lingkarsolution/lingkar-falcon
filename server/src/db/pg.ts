@@ -4,6 +4,13 @@ import { config } from '../config.js';
 
 let pool: any = null;
 
+const resetPool = async (): Promise<void> => {
+  const current = pool;
+  pool = null;
+  if (!current) return;
+  try { await current.end(); } catch {}
+};
+
 const getPool = async () => {
   if (pool) return pool;
   if (!config.databaseUrl) return null;
@@ -13,6 +20,10 @@ const getPool = async () => {
     ssl: config.databaseUrl.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
     max: 4,
     idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 15_000,
+  });
+  pool.on('error', (error: Error) => {
+    console.error('[pg] idle client error:', error.message);
   });
   await pool.query(`
     CREATE TABLE IF NOT EXISTS civicfalcon_state (
@@ -27,20 +38,30 @@ const getPool = async () => {
 export const pgEnabled = (): boolean => Boolean(config.databaseUrl);
 
 export const pgLoad = async (): Promise<unknown | null> => {
-  const p = await getPool();
-  if (!p) return null;
-  const r = await p.query(`SELECT data FROM civicfalcon_state WHERE id = 'singleton' LIMIT 1`);
-  return r.rows[0]?.data ?? null;
+  try {
+    const p = await getPool();
+    if (!p) return null;
+    const r = await p.query(`SELECT data FROM civicfalcon_state WHERE id = 'singleton' LIMIT 1`);
+    return r.rows[0]?.data ?? null;
+  } catch (error) {
+    await resetPool();
+    throw error;
+  }
 };
 
 export const pgSave = async (data: unknown): Promise<void> => {
-  const p = await getPool();
-  if (!p) return;
-  await p.query(
-    `INSERT INTO civicfalcon_state (id, data, updated_at) VALUES ('singleton', $1::jsonb, NOW())
-     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-    [JSON.stringify(data)],
-  );
+  try {
+    const p = await getPool();
+    if (!p) return;
+    await p.query(
+      `INSERT INTO civicfalcon_state (id, data, updated_at) VALUES ('singleton', $1::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [JSON.stringify(data)],
+    );
+  } catch (error) {
+    await resetPool();
+    throw error;
+  }
 };
 
 export const pgClose = async (): Promise<void> => {

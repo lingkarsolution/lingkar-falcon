@@ -1,5 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -134,6 +136,43 @@ function ToolPanel({ toolCall }: { toolCall: ToolCallView }) {
   );
 }
 
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ ...props }: any) => <h1 className="mb-3 mt-4 text-xl font-semibold leading-tight first:mt-0" {...props} />,
+        h2: ({ ...props }: any) => <h2 className="mb-2 mt-4 text-lg font-semibold leading-tight first:mt-0" {...props} />,
+        h3: ({ ...props }: any) => <h3 className="mb-2 mt-3 text-base font-semibold leading-tight first:mt-0" {...props} />,
+        p: ({ ...props }: any) => <p className="my-2 leading-relaxed first:mt-0 last:mb-0" {...props} />,
+        a: ({ ...props }: any) => <a className="font-medium text-primary underline underline-offset-4" target="_blank" rel="noreferrer" {...props} />,
+        ul: ({ ...props }: any) => <ul className="my-2 list-disc space-y-1 pl-5" {...props} />,
+        ol: ({ ...props }: any) => <ol className="my-2 list-decimal space-y-1 pl-5" {...props} />,
+        li: ({ ...props }: any) => <li className="leading-relaxed" {...props} />,
+        blockquote: ({ ...props }: any) => <blockquote className="my-3 border-l-2 border-border pl-3 text-muted-foreground" {...props} />,
+        table: ({ ...props }: any) => (
+          <div className="my-3 overflow-x-auto rounded-md border border-border">
+            <table className="w-full min-w-[520px] border-collapse text-left text-xs" {...props} />
+          </div>
+        ),
+        thead: ({ ...props }: any) => <thead className="bg-muted/70" {...props} />,
+        th: ({ ...props }: any) => <th className="border-b border-border px-3 py-2 font-semibold" {...props} />,
+        td: ({ ...props }: any) => <td className="border-t border-border px-3 py-2 align-top" {...props} />,
+        code: ({ className, children, ...props }: any) => {
+          const inline = !className;
+          return inline
+            ? <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]" {...props}>{children}</code>
+            : <code className={cn("font-mono text-xs", className)} {...props}>{children}</code>;
+        },
+        pre: ({ ...props }: any) => <pre className="my-3 overflow-x-auto rounded-md bg-muted p-3 text-xs leading-relaxed" {...props} />,
+        hr: ({ ...props }: any) => <hr className="my-4 border-border" {...props} />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 function AssistantBubble({ bubble }: { bubble: ChatBubble }) {
   return (
     <div className="flex justify-start">
@@ -154,7 +193,9 @@ function AssistantBubble({ bubble }: { bubble: ChatBubble }) {
         )}
         {!!bubble.tools?.length && <div className="mb-3 space-y-2">{bubble.tools.map((toolCall) => <ToolPanel key={toolCall.id} toolCall={toolCall} />)}</div>}
         {bubble.content ? (
-          <div className="whitespace-pre-wrap leading-relaxed text-foreground">{bubble.content}</div>
+          <div className="min-w-0 text-foreground">
+            <MarkdownContent content={bubble.content} />
+          </div>
         ) : bubble.streaming ? (
           <div className="text-muted-foreground">Streaming response...</div>
         ) : null}

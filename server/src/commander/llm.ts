@@ -73,9 +73,13 @@ export const chatCompletion = async (req: ChatRequest): Promise<ChatResponse> =>
     .filter((message) => message.role !== 'tool')
     .map((message) => ({ role: message.role, content: message.content ?? '' })) as ModelMessage[];
 
+  const finalMessages = req.jsonMode
+    ? [{ role: 'system', content: 'Return only valid JSON. Do not include markdown fences, prose, or commentary.' } as ModelMessage, ...messages]
+    : messages;
+
   const result = await generateText({
     model: getLlmModel(),
-    messages,
+    messages: finalMessages,
     temperature: req.temperature ?? 0.2,
     maxOutputTokens: req.maxTokens,
   });

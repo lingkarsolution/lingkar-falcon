@@ -1,6 +1,7 @@
 // Web search connector — uses the §31 provider waterfall and treats results as web mentions.
 import { webSearch } from './search/router.js';
 import { sha256 } from '../lib/crypto.js';
+import { indonesianNewsToDrafts, searchIndonesianNews } from '../services/indonesianNews.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 
 export const webConnector: SourceConnector = {
@@ -13,6 +14,21 @@ export const webConnector: SourceConnector = {
   },
 
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
+    if (ctx.connectorConfig?.trendingNews === true) {
+      const query = String(ctx.connectorConfig.trendingNewsQuery ?? ctx.keywords.slice(0, 5).join(' ')).trim();
+      const sources = Array.isArray(ctx.connectorConfig.newsSourceDomains)
+        ? ctx.connectorConfig.newsSourceDomains.map(String)
+        : undefined;
+      const days = Number(ctx.connectorConfig.days ?? ctx.connectorConfig.freshnessDays ?? 30);
+      const aggregated = await searchIndonesianNews({
+        query,
+        sources,
+        maxResults: ctx.maxItems,
+        freshnessDays: Number.isFinite(days) ? Math.min(90, Math.max(1, days)) : 30,
+      });
+      return indonesianNewsToDrafts(ctx.topicId, aggregated.results).slice(0, ctx.maxItems);
+    }
+
     const query = ctx.keywords.slice(0, 5).join(' OR ');
     if (!query) return [];
     const { results } = await webSearch(query, { maxResults: Math.min(20, ctx.maxItems), freshnessDays: 30 });

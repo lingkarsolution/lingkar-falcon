@@ -3,11 +3,14 @@ import { z } from 'zod';
 import { store } from '../db/store.js';
 import { listMentionsForTopic, sentimentTimeseries, sentimentDistribution, platformDistribution, topEntities, dashboardSummary } from '../services/analytics.js';
 import { webFetch, webSearch, searchProvidersStatus } from '../connectors/search/router.js';
+import { searchGdeltArticles, searchGdeltArticlesFallback } from '../connectors/gdelt.js';
 import { enqueueIngestion } from '../services/ingestion.js';
 import { generateTopicReport } from '../services/reports.js';
 import { clusterTopic } from '../services/clustering.js';
 import { detectRiskEvents } from '../services/risk.js';
 import { generateDailyBrief } from '../services/insights.js';
+import { analyzeMentionsSentimentBulk } from '../services/sentiment.js';
+import { runIntelligenceCycle } from '../services/intelligenceCycle.js';
 import { evaluateAlerts } from '../services/alerts.js';
 import { refreshActorScores } from '../services/actors.js';
 import { newId } from '../lib/crypto.js';
@@ -83,13 +86,18 @@ const searchMentions: ToolHandler<{ topicId?: string; query?: string; limit?: nu
 };
 
 // 2. search_web
-const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays?: number }> = {
+type SearchProviderName = 'auto' | 'searxng' | 'ddg_html' | 'ddg_ia' | 'brave' | 'tavily';
+
+const searchProviderSchema = z.enum(['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily']).default('auto');
+
+const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays?: number; provider?: SearchProviderName }> = {
   name: 'search_web',
-  description: 'Live web search via SearXNG, DuckDuckGo HTML, DuckDuckGo Instant Answer, Brave, and Tavily. Returns titles, urls, snippets. Follow with web_fetch when a page needs to be read.',
+  description: 'Live web search via self-hosted SearXNG first, then DuckDuckGo HTML/Instant Answer as the last automatic fallback. Brave/Tavily are only used when provider is explicitly set. Pass provider="searxng" to force SEARXNG_BASE_URL. Follow with web_fetch when a page needs to be read.',
   inputSchema: z.object({
     query: z.string().min(1),
     maxResults: z.number().int().min(1).max(20).default(10),
     freshnessDays: z.number().int().min(1).max(365).optional(),
+    provider: searchProviderSchema.optional(),
   }),
   parameters: {
     type: 'object',
@@ -97,18 +105,20 @@ const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays
     properties: {
       query: { type: 'string' }, maxResults: { type: 'integer', default: 10 },
       freshnessDays: { type: 'integer' },
+      provider: { type: 'string', enum: ['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily'], default: 'auto' },
     },
   },
-  execute: async (input) => webSearch(input.query, { maxResults: input.maxResults, freshnessDays: input.freshnessDays }),
+  execute: async (input) => webSearch(input.query, { maxResults: input.maxResults, freshnessDays: input.freshnessDays, provider: input.provider }),
 };
 
-const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshnessDays?: number }> = {
+const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshnessDays?: number; provider?: SearchProviderName }> = {
   name: 'web_search',
-  description: 'Search the public web and return ranked {title, url, snippet} results. Use this for up-to-date public information; follow up with web_fetch for the most relevant URL.',
+  description: 'Search the public web and return ranked {title, url, snippet} results. Auto mode uses configured self-hosted SearXNG first and DuckDuckGo only as the final fallback; pass provider="searxng" to force SEARXNG_BASE_URL. Follow up with web_fetch for the most relevant URL.',
   inputSchema: z.object({
     query: z.string().min(1),
     max_results: z.number().int().min(1).max(15).default(5),
     freshnessDays: z.number().int().min(1).max(365).optional(),
+    provider: searchProviderSchema.optional(),
   }),
   parameters: {
     type: 'object',
@@ -117,9 +127,10 @@ const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshne
       query: { type: 'string', description: 'Natural language search query' },
       max_results: { type: 'integer', default: 5 },
       freshnessDays: { type: 'integer' },
+      provider: { type: 'string', enum: ['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily'], default: 'auto' },
     },
   },
-  execute: async (input) => webSearch(input.query, { maxResults: input.max_results, freshnessDays: input.freshnessDays }),
+  execute: async (input) => webSearch(input.query, { maxResults: input.max_results, freshnessDays: input.freshnessDays, provider: input.provider }),
 };
 
 const fetchWebPage: ToolHandler<{ url: string; max_chars?: number }> = {
@@ -146,7 +157,48 @@ const searchNews: ToolHandler<{ query: string; maxResults?: number }> = {
   description: 'Search recent news articles via the web search waterfall biased toward news domains.',
   inputSchema: z.object({ query: z.string().min(1), maxResults: z.number().int().min(1).max(20).default(10) }),
   parameters: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, maxResults: { type: 'integer', default: 10 } } },
-  execute: async (input) => webSearch(`${input.query} news`, { maxResults: input.maxResults, freshnessDays: 30 }),
+  execute: async (input) => webSearch(`${input.query} news`, { maxResults: input.maxResults, freshnessDays: 30, category: 'news' }),
+};
+
+const searchGdeltNews: ToolHandler<{ query: string; maxResults?: number; days?: number; dateFrom?: string; dateTo?: string }> = {
+  name: 'search_gdelt_news',
+  description: 'Search GDELT DOC 2.0 global news full-text index. Free/no-key OSINT source across translated global coverage; ingestion falls back to SearXNG-first web news search if GDELT is slow or unavailable.',
+  inputSchema: z.object({
+    query: z.string().min(1),
+    maxResults: z.number().int().min(1).max(250).default(50),
+    days: z.number().int().min(1).max(90).default(30),
+    dateFrom: z.string().optional(),
+    dateTo: z.string().optional(),
+  }),
+  parameters: {
+    type: 'object',
+    required: ['query'],
+    properties: {
+      query: { type: 'string', description: 'GDELT query; supports phrases, OR blocks, domain:, sourcelang:, sourcecountry:, theme:, tone filters' },
+      maxResults: { type: 'integer', default: 50 },
+      days: { type: 'integer', default: 30, description: 'Lookback window in calendar days, max 90' },
+      dateFrom: { type: 'string', description: 'Optional ISO start datetime; GDELT only supports recent rolling history' },
+      dateTo: { type: 'string', description: 'Optional ISO end datetime' },
+    },
+  },
+  execute: async (input) => {
+    try {
+      const result = await searchGdeltArticles({
+        query: input.query,
+        maxRecords: input.maxResults,
+        timespanDays: input.days,
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        sort: 'datedesc',
+      });
+      if (result.count > 0) return result;
+      const fallback = await searchGdeltArticlesFallback({ query: input.query, maxRecords: input.maxResults, timespanDays: input.days });
+      return { ...fallback, fallback: true, primaryCount: 0 };
+    } catch (error) {
+      const fallback = await searchGdeltArticlesFallback({ query: input.query, maxRecords: input.maxResults, timespanDays: input.days });
+      return { ...fallback, fallback: true, primaryError: (error as Error).message };
+    }
+  },
 };
 
 // 4. get_sentiment_timeseries
@@ -275,11 +327,26 @@ const listRisks: ToolHandler<{ topicId?: string; severity?: string }> = {
 };
 
 // 13. trigger_ingestion
-const triggerIngestion: ToolHandler<{ topicId: string; platform: string; maxItems?: number }> = {
+const triggerIngestion: ToolHandler<{ topicId: string; platform: string; maxItems?: number; days?: number; dateFrom?: string; dateTo?: string }> = {
   name: 'trigger_ingestion',
-  description: 'Start a manual ingestion job for a topic via a specific connector platform.',
-  inputSchema: z.object({ topicId: z.string(), platform: z.string(), maxItems: z.number().int().min(1).max(250).default(50) }),
-  parameters: { type: 'object', required: ['topicId', 'platform'], properties: { topicId: { type: 'string' }, platform: { type: 'string' }, maxItems: { type: 'integer', default: 50 } } },
+  description: 'Start a manual ingestion job for a topic via a specific connector platform. Supports historical lookback for connectors like GDELT; days defaults to 30 and is capped to 90.',
+  inputSchema: z.object({
+    topicId: z.string(),
+    platform: z.string(),
+    maxItems: z.number().int().min(1).max(250).default(50),
+    days: z.number().int().min(1).max(90).default(30),
+    dateFrom: z.string().optional(),
+    dateTo: z.string().optional(),
+  }),
+  parameters: {
+    type: 'object', required: ['topicId', 'platform'],
+    properties: {
+      topicId: { type: 'string' }, platform: { type: 'string' }, maxItems: { type: 'integer', default: 50 },
+      days: { type: 'integer', default: 30, description: 'Historical lookback in calendar days, max 90' },
+      dateFrom: { type: 'string', description: 'Optional ISO start datetime' },
+      dateTo: { type: 'string', description: 'Optional ISO end datetime' },
+    },
+  },
   requiresRole: 'analyst',
   execute: async (input, ctx) => {
     const topic = findTopic(ctx.tenantId, input.topicId);
@@ -290,8 +357,9 @@ const triggerIngestion: ToolHandler<{ topicId: string; platform: string; maxItem
     const job = await enqueueIngestion({
       tenantId: ctx.tenantId, topicId: topic.id, connectorId: connector.id,
       jobType: 'manual', requestedBy: ctx.userId, maxItems: input.maxItems ?? 50,
+      days: input.days ?? 30, dateFrom: input.dateFrom, dateTo: input.dateTo,
     });
-    audit({ tenantId: ctx.tenantId, actorUserId: ctx.userId, action: 'ingestion.trigger', entityType: 'ingestion_job', entityId: job.id, after: { topicId: topic.id, platform: input.platform } });
+    audit({ tenantId: ctx.tenantId, actorUserId: ctx.userId, action: 'ingestion.trigger', entityType: 'ingestion_job', entityId: job.id, after: { topicId: topic.id, platform: input.platform, days: input.days ?? 30 } });
     return { jobId: job.id, status: job.status };
   },
 };
@@ -507,7 +575,55 @@ const compareEntities: ToolHandler<{ topicId: string; entities: string[] }> = {
   },
 };
 
-// 23. dashboard_summary
+// 23. analyze_topic_sentiment
+const analyzeTopicSentiment: ToolHandler<{ topicId: string; limit?: number }> = {
+  name: 'analyze_topic_sentiment',
+  description: 'Run bulk LLM sentiment analysis for saved mentions in a topic and persist the updated sentiment fields.',
+  inputSchema: z.object({ topicId: z.string(), limit: z.number().int().min(1).max(250).default(100) }),
+  parameters: { type: 'object', required: ['topicId'], properties: { topicId: { type: 'string' }, limit: { type: 'integer', default: 100 } } },
+  requiresRole: 'analyst',
+  execute: async (input, ctx) => {
+    const topic = findTopic(ctx.tenantId, input.topicId);
+    if (!topic) return { error: 'topic_not_found' };
+    return analyzeMentionsSentimentBulk({ tenantId: ctx.tenantId, topicId: topic.id, limit: input.limit ?? 100 });
+  },
+};
+
+// 24. run_intelligence_cycle
+const runCycleTool: ToolHandler<{ topicId: string; days?: number; maxItemsPerConnector?: number; includeTrendingNews?: boolean }> = {
+  name: 'run_intelligence_cycle',
+  description: 'Run the full OSINT intelligence cycle for a topic: ingestion, Indonesian trending-news web aggregation, bulk LLM sentiment, clustering, risk detection, and daily brief.',
+  inputSchema: z.object({
+    topicId: z.string(),
+    days: z.number().int().min(1).max(90).default(30),
+    maxItemsPerConnector: z.number().int().min(1).max(250).default(50),
+    includeTrendingNews: z.boolean().default(true),
+  }),
+  parameters: {
+    type: 'object', required: ['topicId'],
+    properties: {
+      topicId: { type: 'string' },
+      days: { type: 'integer', default: 30 },
+      maxItemsPerConnector: { type: 'integer', default: 50 },
+      includeTrendingNews: { type: 'boolean', default: true },
+    },
+  },
+  requiresRole: 'analyst',
+  execute: async (input, ctx) => {
+    const topic = findTopic(ctx.tenantId, input.topicId);
+    if (!topic) return { error: 'topic_not_found' };
+    return runIntelligenceCycle({
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      topicId: topic.id,
+      days: input.days ?? 30,
+      maxItemsPerConnector: input.maxItemsPerConnector ?? 50,
+      includeTrendingNews: input.includeTrendingNews ?? true,
+    });
+  },
+};
+
+// 25. dashboard_summary
 const dashboardTool: ToolHandler<{}> = {
   name: 'get_dashboard_summary',
   description: 'Return cross-topic dashboard stats: total mentions, last 24h, last 7d, sentiment, platform mix.',
@@ -517,12 +633,13 @@ const dashboardTool: ToolHandler<{}> = {
 };
 
 export const TOOLS: ToolHandler<any>[] = [
-  searchMentions, searchWeb, webSearchAlias, fetchWebPage, searchNews,
+  searchMentions, searchWeb, webSearchAlias, fetchWebPage, searchNews, searchGdeltNews,
   sentimentSeries, platformDist, topEntitiesTool,
   summarizeTopic, clusterTool, detectRisks,
   listTopics, listConnectors, listRisks,
   triggerIngestion, createTopic, createAlertRule, evalAlertsTool, generateReportTool,
-  usageStatus, explainScore, monitorActor, findAmplifiers, compareEntities, dashboardTool,
+  usageStatus, explainScore, monitorActor, findAmplifiers, compareEntities,
+  analyzeTopicSentiment, runCycleTool, dashboardTool,
 ];
 
 export const TOOL_DEFS = TOOLS.map((t) => ({

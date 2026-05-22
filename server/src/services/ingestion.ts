@@ -6,6 +6,7 @@ import {
   analyzeSentiment, computeAutomationLikelihood, computeEngagementTotal,
   computeRelevanceScore, detectEmotions, detectIntent, detectLanguage, extractEntities,
 } from '../lib/nlp.js';
+import { analyzeMentionsSentimentBulk } from './sentiment.js';
 import type {
   Connector, IngestionJob, IngestionJobType, Mention, Topic,
 } from '../types.js';
@@ -16,6 +17,11 @@ export const enqueueIngestion = async (params: {
   tenantId: string; topicId: string; connectorId: string;
   jobType: IngestionJobType; requestedBy?: string | null;
   maxItems?: number;
+  days?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  metadata?: Record<string, unknown>;
+  runInline?: boolean;
 }): Promise<IngestionJob> => {
   const id = newId('job');
   const job: IngestionJob = {
@@ -24,16 +30,21 @@ export const enqueueIngestion = async (params: {
     status: 'queued', requestedBy: params.requestedBy ?? null,
     startedAt: null, finishedAt: null,
     fetchedCount: 0, insertedCount: 0, skippedCount: 0, errorCount: 0,
-    metadata: { maxItems: params.maxItems ?? 50 },
+    metadata: {
+      ...(params.metadata ?? {}),
+      maxItems: params.maxItems ?? 50,
+      ...(params.days ? { days: params.days } : {}),
+      ...(params.dateFrom ? { dateFrom: params.dateFrom } : {}),
+      ...(params.dateTo ? { dateTo: params.dateTo } : {}),
+    },
     createdAt: now(),
   };
   store.put('ingestionJobs', id, job);
-  // Run async (non-blocking)
-  setImmediate(() => { void runJob(id); });
+  if (!params.runInline) setImmediate(() => { void runIngestionJob(id); });
   return job;
 };
 
-const runJob = async (jobId: string): Promise<void> => {
+export const runIngestionJob = async (jobId: string): Promise<void> => {
   const job = store.get('ingestionJobs', jobId);
   if (!job) return;
   const topic = store.get('topics', job.topicId);
@@ -55,19 +66,33 @@ const runJob = async (jobId: string): Promise<void> => {
   store.put('ingestionJobs', jobId, { ...job, status: 'running', startedAt: now() });
   try {
     const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
+    const days = Number((job.metadata as any)?.days ?? (connector.config as any)?.historicalDays ?? (connector.config as any)?.timespanDays ?? 30);
+    const dateFrom = (job.metadata as any)?.dateFrom
+      ?? (Number.isFinite(days) && days > 0 ? new Date(Date.now() - Math.min(90, days) * 24 * 3600_000).toISOString() : undefined);
+    const dateTo = (job.metadata as any)?.dateTo;
     const drafts = await impl.fetchMentions({
       tenantId: topic.tenantId, topicId: topic.id, connectorId: connector.id, jobId,
       keywords: topic.keywords, excludeKeywords: topic.excludeKeywords,
       languages: topic.languages, regions: topic.regions,
+      dateFrom, dateTo,
       maxItems,
-      connectorConfig: connector.config ?? {},
+      connectorConfig: { ...(connector.config ?? {}), ...(job.metadata ?? {}) },
     });
     const result = ingestDrafts(topic, drafts);
+    let sentimentResult: Awaited<ReturnType<typeof analyzeMentionsSentimentBulk>> | null = null;
+    if (result.insertedIds.length > 0) {
+      sentimentResult = await analyzeMentionsSentimentBulk({
+        tenantId: topic.tenantId,
+        topicId: topic.id,
+        mentionIds: result.insertedIds,
+      });
+    }
     recordUsage(connector, jobId, drafts.length);
     finalize(jobId, 'completed', {
       fetchedCount: drafts.length,
       insertedCount: result.inserted,
       skippedCount: result.skipped,
+      metadata: sentimentResult ? { sentiment: sentimentResult } : undefined,
     });
   } catch (e) {
     const err = e as Error;
@@ -80,12 +105,13 @@ const runJob = async (jobId: string): Promise<void> => {
   }
 };
 
-const ingestDrafts = (topic: Topic, drafts: any[]): { inserted: number; skipped: number } => {
+const ingestDrafts = (topic: Topic, drafts: any[]): { inserted: number; skipped: number; insertedIds: string[] } => {
   // Dedupe via sourceUrlHash within topic
   const existingHashes = new Set(
     store.list('mentions').filter((m: any) => m.topicId === topic.id).map((m: any) => m.sourceUrlHash),
   );
   let inserted = 0, skipped = 0;
+  const insertedIds: string[] = [];
   for (const d of drafts) {
     if (d.sourceUrlHash && existingHashes.has(d.sourceUrlHash)) { skipped++; continue; }
     const text = d.text ?? '';
@@ -106,6 +132,7 @@ const ingestDrafts = (topic: Topic, drafts: any[]): { inserted: number; skipped:
       metrics,
       nlp: {
         sentiment: sent.sentiment, sentimentConfidence: sent.confidence,
+        sentimentSource: 'heuristic', sentimentAnalyzedAt: collectedAt,
         emotions: detectEmotions(text), intent: detectIntent(text),
         entities, topics: [], summary: null,
       },
@@ -120,8 +147,9 @@ const ingestDrafts = (topic: Topic, drafts: any[]): { inserted: number; skipped:
     store.put('mentions', id, mention);
     if (d.sourceUrlHash) existingHashes.add(d.sourceUrlHash);
     inserted++;
+    insertedIds.push(id);
   }
-  return { inserted, skipped };
+  return { inserted, skipped, insertedIds };
 };
 
 const recordUsage = (connector: Connector, jobId: string, requestCount: number) => {
@@ -142,7 +170,7 @@ const recordUsage = (connector: Connector, jobId: string, requestCount: number) 
 const finalize = (
   jobId: string,
   status: IngestionJob['status'],
-  patch: Partial<Pick<IngestionJob, 'fetchedCount' | 'insertedCount' | 'skippedCount' | 'errorCount'>> & { errorMessage?: string },
+  patch: Partial<Pick<IngestionJob, 'fetchedCount' | 'insertedCount' | 'skippedCount' | 'errorCount'>> & { errorMessage?: string; metadata?: Record<string, unknown> },
 ) => {
   const job = store.get('ingestionJobs', jobId);
   if (!job) return;
@@ -152,6 +180,6 @@ const finalize = (
     insertedCount: patch.insertedCount ?? job.insertedCount,
     skippedCount: patch.skippedCount ?? job.skippedCount,
     errorCount: patch.errorCount ?? job.errorCount,
-    metadata: { ...job.metadata, ...(patch.errorMessage ? { errorMessage: patch.errorMessage } : {}) },
+    metadata: { ...job.metadata, ...(patch.metadata ?? {}), ...(patch.errorMessage ? { errorMessage: patch.errorMessage } : {}) },
   });
 };

@@ -6,9 +6,15 @@ import { errorResponse, ok } from '../../lib/api.js';
 import { generateDailyBrief } from '../../services/insights.js';
 import { clusterTopic } from '../../services/clustering.js';
 import { detectRiskEvents } from '../../services/risk.js';
+import { analyzeMentionsSentimentBulk } from '../../services/sentiment.js';
 import type { Topic, Insight, IssueCluster, RiskEvent } from '../../types.js';
 
 const topicIdSchema = z.object({ topicId: z.string() });
+const sentimentSchema = z.object({
+  topicId: z.string(),
+  mentionIds: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(250).default(100),
+});
 
 export const registerAIRoutes = (app: FastifyInstance) => {
   app.post('/daily-brief', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
@@ -47,6 +53,20 @@ export const registerAIRoutes = (app: FastifyInstance) => {
     clusterTopic(req.tenant!.id, parsed.data.topicId);
     const events = detectRiskEvents(req.tenant!.id, parsed.data.topicId);
     return ok(reply, events);
+  });
+
+  app.post('/analyze-sentiment', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
+    const parsed = sentimentSchema.safeParse(req.body);
+    if (!parsed.success) return errorResponse(reply, 400, 'INVALID_INPUT', 'Invalid sentiment request', { issues: parsed.error.issues });
+    const t = store.get('topics', parsed.data.topicId) as Topic | undefined;
+    if (!t || t.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Topic not found');
+    const result = await analyzeMentionsSentimentBulk({
+      tenantId: req.tenant!.id,
+      topicId: t.id,
+      mentionIds: parsed.data.mentionIds,
+      limit: parsed.data.limit,
+    });
+    return ok(reply, result);
   });
 
   app.get('/topics/:id/risk-events', { preHandler: requireAuth() }, async (req, reply) => {

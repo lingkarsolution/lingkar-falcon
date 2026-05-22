@@ -10,6 +10,9 @@ const triggerSchema = z.object({
   topicId: z.string(),
   connectorId: z.string(),
   maxItems: z.number().int().min(1).max(250).default(50),
+  days: z.number().int().min(1).max(90).default(30),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
 });
 
 export const registerIngestionRoutes = (app: FastifyInstance) => {
@@ -19,6 +22,7 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
     const job = await enqueueIngestion({
       tenantId: req.tenant!.id, topicId: parsed.data.topicId, connectorId: parsed.data.connectorId,
       jobType: 'manual', requestedBy: req.user!.id, maxItems: parsed.data.maxItems,
+      days: parsed.data.days, dateFrom: parsed.data.dateFrom, dateTo: parsed.data.dateTo,
     });
     return ok(reply, job);
   });

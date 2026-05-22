@@ -45,6 +45,10 @@ export interface Topic {
   id: string; tenantId: string; title: string; description?: string | null; category?: string | null;
   keywords: string[]; excludeKeywords: string[]; platforms: string[]; languages: string[]; regions: string[];
   status: 'active' | 'paused' | 'archived'; collectionFrequencyMinutes: number;
+  intelligenceSettings?: {
+    lookbackDays?: number; maxItemsPerConnector?: number; dailyAnalysisEnabled?: boolean;
+    trendingNewsEnabled?: boolean; lastCycleRunAt?: string | null;
+  };
   createdAt: string; updatedAt: string;
 }
 export interface Connector {
@@ -59,15 +63,15 @@ export interface Mention {
   id: string; tenantId: string; topicId: string; platform: Platform;
   text: string; publishedAt?: string | null; collectedAt: string; sourceUrl?: string | null;
   author?: { username?: string; displayName?: string; followerCount?: number | null };
-  nlp: { sentiment: Sentiment; sentimentScore: number; entities: { text: string; type: string }[]; keywords: string[]; language?: string };
+  nlp: { sentiment: Sentiment; sentimentConfidence?: number | null; sentimentScore?: number; sentimentSource?: 'heuristic' | 'llm' | null; entities: { text: string; type: string }[]; keywords: string[]; language?: string; summary?: string | null };
   metrics?: { likeCount?: number; shareCount?: number; commentCount?: number; viewCount?: number };
   quality?: { relevanceScore: number; automationLikelihood: number };
 }
 export interface RiskEvent {
-  id: string; tenantId: string; topicId: string; clusterId?: string | null;
+  id: string; tenantId: string; topicId: string; clusterId?: string | null; issueClusterId?: string | null;
   title: string; summary: string; score: number; severity: 'low' | 'medium' | 'high' | 'critical';
-  status: 'new' | 'reviewing' | 'mitigated' | 'dismissed'; category: string;
-  detectedAt: string; evidenceMentionIds: string[]; narrativeTags?: string[]; code?: string;
+  status: 'new' | 'reviewing' | 'acknowledged' | 'resolved' | 'dismissed' | 'mitigated'; category: string;
+  detectedAt?: string; firstSeenAt?: string; lastSeenAt?: string; evidenceMentionIds: string[]; narrativeTags?: string[]; code?: string;
 }
 export interface AlertEvent {
   id: string; tenantId: string; ruleId: string; topicId?: string | null;
@@ -79,9 +83,11 @@ export interface Insight {
   whyItMatters: string; recommendation: string; evidenceMentionIds: string[]; generatedAt: string;
 }
 export interface IssueCluster {
-  id: string; tenantId: string; topicId: string; label: string; size: number;
-  sentimentBreakdown: { positive: number; neutral: number; negative: number };
-  representativeMentionIds: string[]; keywords: string[];
+  id: string; tenantId: string; topicId: string;
+  title?: string; label?: string; summary?: string; sentiment?: Sentiment;
+  mentionCount?: number; size?: number; engagementTotal?: number; reachEstimate?: number;
+  sentimentBreakdown?: { positive: number; neutral: number; negative: number; mixed?: number; unknown?: number };
+  representativeMentionIds?: string[]; sampleMentionIds?: string[]; keywords?: string[];
 }
 export interface Actor {
   id: string; tenantId: string; platform: Platform; username: string; displayName: string;
@@ -91,10 +97,14 @@ export interface Actor {
 }
 export interface IngestionJob {
   id: string; tenantId: string; topicId: string; connectorId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  itemsFetched: number; itemsStored: number; itemsDeduped: number;
+  jobType?: string; status: 'queued' | 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  fetchedCount?: number; insertedCount?: number; skippedCount?: number; errorCount?: number;
+  itemsFetched?: number; itemsStored?: number; itemsDeduped?: number;
+  metadata?: Record<string, unknown>;
   createdAt: string; startedAt?: string | null; finishedAt?: string | null;
 }
+export interface IngestionJobError { id: string; ingestionJobId: string; message: string; createdAt: string; }
+export interface IngestionJobDetail { job: IngestionJob; errors: IngestionJobError[]; }
 export interface Report {
   id: string; tenantId: string; topicId: string; title: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
@@ -103,6 +113,20 @@ export interface Report {
 export interface AuditLog {
   id: string; tenantId: string; actorUserId?: string | null; action: string;
   entityType?: string | null; entityId?: string | null; createdAt: string;
+}
+
+export interface IndonesianNewsItem {
+  title: string; url: string; snippet: string; source?: string; sourceDomain: string; searchQuery: string;
+}
+export interface IndonesianNewsSearchResult {
+  query: string; sources: string[]; providerPriority: string[]; results: IndonesianNewsItem[]; errors: string[];
+}
+export interface BulkSentimentResult {
+  llmEnabled: boolean; requested: number; analyzed: number; updated: number; failed: number; skipped: number; errors: string[];
+}
+export interface IntelligenceCycleResult {
+  topicId: string; days: number; jobs: IngestionJob[]; sentiment: BulkSentimentResult;
+  clusters: IssueCluster[]; risks: RiskEvent[]; brief: Insight | null; startedAt: string; finishedAt: string;
 }
 
 // ---- Endpoint helpers (typed wrappers) ----

@@ -31,7 +31,7 @@ const connectorDefaults = (): Array<{
   return [
     { platform: 'gdelt', name: 'GDELT (Global news)', mode: 'free', status: 'active', enabled: true },
     { platform: 'rss', name: 'RSS Feeds', mode: 'free', status: 'active', enabled: true },
-    { platform: 'web', name: 'Web Search (Brave/DDG/SearXNG)', mode: 'free', status: 'active', enabled: true, monthlyBudgetUsd: 25 },
+    { platform: 'web', name: 'Web Search (SearXNG first, DDG fallback)', mode: 'free', status: 'active', enabled: true, monthlyBudgetUsd: 25 },
     { platform: 'reddit', name: 'Reddit Public JSON', mode: 'free', status: 'active', enabled: true },
     { platform: 'youtube', name: 'YouTube (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: youtube ? 'active' : 'not_configured', enabled: youtube, monthlyBudgetUsd: 50, credentialConfigured: youtube },
     { platform: 'x', name: 'X API v2 (paid)', mode: 'paid_api', status: 'not_configured', enabled: false, monthlyBudgetUsd: 100 },
@@ -80,11 +80,34 @@ const migrateConnectorDefaults = async (): Promise<void> => {
   await store.flush();
 };
 
+const migrateAdverseNeutralSentiment = async (): Promise<void> => {
+  let changed = 0;
+  for (const mention of store.list('mentions') as Mention[]) {
+    if (mention.nlp.sentiment !== 'neutral' && mention.nlp.sentiment !== 'unknown') continue;
+    const analyzed = analyzeSentiment(`${mention.title ?? ''}\n${mention.text}`);
+    if (analyzed.sentiment !== 'negative' || analyzed.confidence < 0.75) continue;
+    store.put('mentions', mention.id, {
+      ...mention,
+      nlp: {
+        ...mention.nlp,
+        sentiment: 'negative',
+        sentimentConfidence: analyzed.confidence,
+        sentimentSource: mention.nlp.sentimentSource ?? 'heuristic',
+        sentimentAnalyzedAt: now(),
+      },
+      updatedAt: now(),
+    });
+    changed++;
+  }
+  if (changed > 0) await store.flush();
+};
+
 export const seedIfEmpty = async (): Promise<void> => {
   await store.load();
   if (Object.keys(store.data.tenants).length > 0) {
     await migrateOldDevAdminPassword();
     await migrateConnectorDefaults();
+    await migrateAdverseNeutralSentiment();
     return;
   }
 
