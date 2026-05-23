@@ -67,7 +67,7 @@ export const config = {
 
   // Demo admin
   adminEmail: process.env.ADMIN_EMAIL ?? 'admin@civicfalcon.local',
-  adminPassword: process.env.ADMIN_PASSWORD ?? 'changeme123',
+  adminPassword: process.env.ADMIN_PASSWORD ?? 'demo123',
 } as const;
 
 export type AppConfig = typeof config;

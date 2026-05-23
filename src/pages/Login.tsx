@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api";
 export default function Login() {
   const { login } = useAuth();
   const [email, setEmail] = useState("admin@civicfalcon.local");
-  const [password, setPassword] = useState("changeme123");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
