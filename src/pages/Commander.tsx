@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Send, Wrench, MessagesSquare, BrainCircuit, Loader2, CheckCircle2, AlertTriangle, Globe2 } from "lucide-react";
+import { Sparkles, Send, MessagesSquare, BrainCircuit, Loader2, CheckCircle2, AlertTriangle, Globe2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";

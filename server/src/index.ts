@@ -3,6 +3,10 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { store } from './db/store.js';
 import { pgClose, pgEnabled } from './db/pg.js';
@@ -29,6 +33,50 @@ app.get('/api/health', async () => ({
 }));
 
 await app.register(registerV1Routes, { prefix: '/api/v1' });
+
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
+const webDistDir = path.resolve(currentDir, '..', '..', 'dist');
+const webIndexFile = path.join(webDistDir, 'index.html');
+
+const getStaticFilePath = (requestUrl: string): string | null => {
+  try {
+    const url = new URL(requestUrl, 'http://civicfalcon.local');
+    const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    const candidate = path.resolve(webDistDir, relativePath);
+    if (!candidate.startsWith(webDistDir + path.sep) && candidate !== webDistDir) return null;
+    if (!existsSync(candidate) || !statSync(candidate).isFile()) return null;
+    return relativePath;
+  } catch {
+    return null;
+  }
+};
+
+const isApiRequest = (requestUrl: string): boolean => {
+  try {
+    const url = new URL(requestUrl, 'http://civicfalcon.local');
+    return url.pathname === '/api' || url.pathname.startsWith('/api/');
+  } catch {
+    return requestUrl === '/api' || requestUrl.startsWith('/api/');
+  }
+};
+
+if (existsSync(webIndexFile)) {
+  await app.register(fastifyStatic, { root: webDistDir, wildcard: false });
+
+  app.get('/*', async (request, reply) => {
+    if (isApiRequest(request.url)) {
+      return reply.code(404).send({ ok: false, error: { code: 'NOT_FOUND', message: 'Route not found' } });
+    }
+
+    const staticFilePath = getStaticFilePath(request.url);
+    return reply.sendFile(staticFilePath ?? 'index.html');
+  });
+
+  app.log.info(`Serving CivicFalcon web app from ${webDistDir}`);
+} else {
+  app.log.warn(`Web app build not found at ${webDistDir}; API-only mode enabled`);
+}
 
 await store.load();
 await seedIfEmpty();

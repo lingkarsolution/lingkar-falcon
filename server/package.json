@@ -13,6 +13,7 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.0.0",
     "@fastify/rate-limit": "^10.2.2",
+    "@fastify/static": "^8.0.0",
     "@openrouter/ai-sdk-provider": "^2.9.0",
     "ai": "^6.0.190",
     "fast-xml-parser": "^4.5.0",

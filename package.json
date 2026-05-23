@@ -7,7 +7,10 @@
     "dev": "concurrently -k -n web,api -c magenta,cyan \"pnpm dev:web\" \"pnpm dev:api\"",
     "dev:web": "vite",
     "dev:api": "pnpm --dir server dev",
-    "build": "tsc -b && vite build",
+    "build": "pnpm run build:web && pnpm run build:api",
+    "build:web": "tsc -b && vite build",
+    "build:api": "pnpm --dir server build",
+    "start": "pnpm --dir server start",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

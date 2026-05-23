@@ -1,16 +1,11 @@
 # AGENTS.md
 
-## Project summary
-
-A full-stack **starter template** for Dark Factory projects. React 19 + Vite frontend with shadcn/ui, a Fastify API gateway backend, and a sample Dashboard UI — designed to be cloned and extended into a real product. Deployable to Azure Web App (multi-stage Docker).
-
 ## Tech stack
 
 | Layer | Stack |
 |---|---|
 | Frontend | React 19, Vite 6, TypeScript 5.7 strict, Tailwind v4, shadcn/ui (New York, zinc), React Router v7, TanStack Query v5, Recharts, Lucide |
-| Backend | Node 20, Fastify 5, `@fastify/cors` + `@fastify/helmet` + `@fastify/rate-limit`, TypeScript 5.8 strict |
-| Deploy target | Azure Web App / Container Apps (monorepo, two workspaces) |
+| Backend | Node 24, Fastify 5, `@fastify/cors` + `@fastify/helmet` + `@fastify/rate-limit`, TypeScript 5.8 strict |
 
 ## Key files
 
@@ -68,5 +63,3 @@ pnpm build            # tsc
 ## Memory
 
 - User wants `tw-animate-css` always installed alongside shadcn — it's a peer dep not auto-resolved.
-- Env vars for config API must be set via the Env panel (platform API not reachable from inside container shell).
-- Do NOT run `vite` commands in exec — platform blocks the string "vite" in shell commands.
