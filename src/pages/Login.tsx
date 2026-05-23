@@ -46,9 +46,9 @@ export default function Login() {
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
-            <p className="text-xs text-muted-foreground text-center">
+            {/* <p className="text-xs text-muted-foreground text-center">
               Default admin: <code className="font-mono">admin@civicfalcon.local</code> / <code className="font-mono">changeme123</code>
-            </p>
+            </p> */}
           </form>
         </CardContent>
       </Card>
