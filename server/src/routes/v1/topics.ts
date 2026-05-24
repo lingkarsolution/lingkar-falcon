@@ -10,9 +10,12 @@ import { searchIndonesianNews, INDONESIAN_NEWS_SOURCES } from '../../services/in
 import { runIntelligenceCycle } from '../../services/intelligenceCycle.js';
 import type { Connector, Topic } from '../../types.js';
 
+const requiredTitle = z.string().trim().min(2);
+const requiredDescription = z.string().trim().min(1);
+
 const topicSchema = z.object({
-  title: z.string().min(2),
-  description: z.string().optional().nullable(),
+  title: requiredTitle,
+  description: requiredDescription,
   category: z.string().optional().nullable(),
   keywords: z.array(z.string()).min(1),
   excludeKeywords: z.array(z.string()).default([]),
@@ -29,6 +32,11 @@ const topicCreateSchema = topicSchema.extend({
   trendingNewsQuery: z.string().optional(),
   trendingNewsMaxItems: z.number().int().min(1).max(50).default(24),
   trendingNewsSources: z.array(z.string()).default([...INDONESIAN_NEWS_SOURCES]),
+});
+
+const topicUpdateSchema = topicSchema.partial().extend({
+  title: requiredTitle,
+  description: requiredDescription,
 });
 
 const cycleSchema = z.object({
@@ -124,7 +132,7 @@ export const registerTopicRoutes = (app: FastifyInstance) => {
     const { id } = req.params as { id: string };
     const existing = store.get('topics', id) as Topic | undefined;
     if (!existing || existing.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Topic not found');
-    const parsed = topicSchema.partial().safeParse(req.body);
+    const parsed = topicUpdateSchema.safeParse(req.body);
     if (!parsed.success) return errorResponse(reply, 400, 'INVALID_INPUT', 'Invalid update', { issues: parsed.error.issues });
     const updated: Topic = { ...existing, ...(parsed.data as any), updatedAt: new Date().toISOString() };
     store.put('topics', id, updated);

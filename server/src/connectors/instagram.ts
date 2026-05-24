@@ -19,7 +19,7 @@ const fetchOfficialInstagramMentions = async (ctx: IngestionContext): Promise<Ca
   if (!config.instagram.accessToken) return [];
   const configured = ctx.connectorConfig ?? {};
   const igUserId = typeof configured.instagramUserId === 'string' ? configured.instagramUserId : 'me';
-  const url = `https://graph.facebook.com/v20.0/${igUserId}/media?fields=id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count&limit=${Math.min(25, ctx.maxItems)}&access_token=${config.instagram.accessToken}`;
+  const url = `https://graph.facebook.com/v20.0/${igUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=${Math.min(25, ctx.maxItems)}&access_token=${config.instagram.accessToken}`;
   const r = await fetch(url);
   if (!r.ok) return [];
   const data: any = await r.json();
@@ -31,6 +31,14 @@ const fetchOfficialInstagramMentions = async (ctx: IngestionContext): Promise<Ca
       title: null, text: m.caption ?? '', language: null,
       author: { username: igUserId },
       publishedAt: m.timestamp ?? null,
+      media: m.media_url ? [{
+        id: `media_${sha256(`${m.media_type}:${m.media_url}`).slice(0, 16)}`,
+        type: String(m.media_type ?? '').toUpperCase().includes('VIDEO') ? 'video' : 'image',
+        sourceUrl: m.media_url,
+        thumbnailUrl: m.thumbnail_url ?? null,
+        transcript: m.caption ?? null,
+        status: 'queued',
+      }] : [],
       metrics: {
         likes: m.like_count ?? 0, comments: m.comments_count ?? 0,
         engagementTotal: (m.like_count ?? 0) + (m.comments_count ?? 0),

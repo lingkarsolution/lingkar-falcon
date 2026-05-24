@@ -9,14 +9,26 @@ export const registerMentionRoutes = (app: FastifyInstance) => {
     const q = req.query as Record<string, string | undefined>;
     let list = (store.list('mentions') as Mention[]).filter((m) => m.tenantId === req.tenant!.id);
     if (q.topicId) list = list.filter((m) => m.topicId === q.topicId);
-    if (q.platform) list = list.filter((m) => m.platform === q.platform);
+    const platform = q.platform ?? q.source;
+    if (platform) list = list.filter((m) => m.platform === platform);
+    if (q.sourceType) list = list.filter((m) => m.sourceType === q.sourceType);
+    if (q.mediaType) {
+      const mediaType = q.mediaType;
+      list = list.filter((m) => {
+        const media = m.media ?? [];
+        if (mediaType === 'none' || mediaType === 'no_media') return media.length === 0;
+        if (mediaType === 'other') return media.some((asset) => asset.type !== 'image' && asset.type !== 'video');
+        return media.some((asset) => asset.type === mediaType);
+      });
+    }
     if (q.sentiment) list = list.filter((m) => m.nlp.sentiment === q.sentiment);
     if (q.search) {
       const needle = q.search.toLowerCase();
       list = list.filter((m) => m.text.toLowerCase().includes(needle));
     }
+    const sortDirection = q.sort === 'oldest' ? 1 : -1;
     list = list.sort((a, b) =>
-      new Date(b.publishedAt ?? b.collectedAt).getTime() - new Date(a.publishedAt ?? a.collectedAt).getTime());
+      sortDirection * (new Date(a.publishedAt ?? a.collectedAt).getTime() - new Date(b.publishedAt ?? b.collectedAt).getTime()));
     const limit = Math.min(200, Number(q.limit ?? 50));
     return ok(reply, paginate(list, limit, q.cursor ?? null));
   });

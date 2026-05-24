@@ -1,5 +1,6 @@
 // Topic-level analytics aggregations (volume, sentiment, platform mix, top entities).
 import { store } from '../db/store.js';
+import { cityGeoTrends } from './geoEnrichment.js';
 import type { Mention, Sentiment, Platform } from '../types.js';
 
 export type DateRange = { from?: string; to?: string };
@@ -88,5 +89,6 @@ export const dashboardSummary = (tenantId: string, topicIds?: string[]) => {
     sentiment24h: sentimentDistribution(last24h),
     platform24h: platformDistribution(last24h),
     timeseries7d: sentimentTimeseries(last7d, 'day'),
+    geoTrends: cityGeoTrends(tenantId, 8),
   };
 };

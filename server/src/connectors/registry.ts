@@ -9,6 +9,7 @@ import { xConnector } from './x.js';
 import { facebookConnector } from './facebook.js';
 import { instagramConnector } from './instagram.js';
 import { tiktokConnector } from './tiktok.js';
+import { threadsConnector } from './threads.js';
 import { newsConnector } from './news.js';
 
 export const connectorRegistry: Record<Platform, SourceConnector | undefined> = {
@@ -21,6 +22,7 @@ export const connectorRegistry: Record<Platform, SourceConnector | undefined> = 
   facebook: facebookConnector,
   instagram: instagramConnector,
   tiktok: tiktokConnector,
+  threads: threadsConnector,
   news: newsConnector,
   bluesky: undefined,
   mastodon: undefined,

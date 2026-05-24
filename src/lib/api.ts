@@ -36,7 +36,7 @@ export const api = {
 
 // ---- Types (loose mirrors of server types — enough for UI) ----
 export type Role = 'admin' | 'analyst' | 'viewer';
-export type Sentiment = 'positive' | 'neutral' | 'negative' | 'mixed';
+export type Sentiment = 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
 export type Platform = string;
 
 export interface User { id: string; email: string; name: string; role: Role; }
@@ -51,6 +51,22 @@ export interface Topic {
   };
   createdAt: string; updatedAt: string;
 }
+export type TrendDiscoverySource = 'cached_mentions' | 'public_search' | 'connector' | 'ensembledata' | 'mixed';
+export interface TrendSample {
+  title?: string | null; text: string; sourceUrl?: string | null; authorName?: string | null; publishedAt?: string | null;
+}
+export interface TrendItem {
+  id: string; platform: Platform; title: string; keywords: string[]; description?: string | null;
+  mentionCount: number; sourceCount: number; engagementTotal: number; score: number;
+  firstSeenAt?: string | null; latestSeenAt?: string | null; sourceType: TrendDiscoverySource;
+  matchedTopicId?: string | null; samples: TrendSample[];
+}
+export interface TrendSnapshot {
+  id: string; tenantId: string; status: 'ready' | 'partial' | 'failed'; platforms: Platform[];
+  trendsByPlatform: Partial<Record<Platform, TrendItem[]>>;
+  errors: Array<{ platform: Platform; message: string }>;
+  generatedAt: string; expiresAt?: string | null; source: TrendDiscoverySource;
+}
 export interface Connector {
   id: string; tenantId: string; platform: Platform; name: string; displayName?: string; enabled: boolean;
   mode: 'free' | 'official_api' | 'paid_api' | 'scraper' | 'manual_import' | 'disabled';
@@ -59,12 +75,24 @@ export interface Connector {
   monthlyBudgetUsd?: number | null; currentMonthRequests?: number; currentMonthSpendUsd?: number;
   lastHealthCheckAt?: string | null; lastHealthMessage?: string | null;
 }
+export type MediaAssetType = 'image' | 'video' | 'other';
+export type MediaProcessingStatus = 'queued' | 'stored' | 'analyzing' | 'completed' | 'failed' | 'skipped';
+export interface MentionMediaAsset {
+  id: string; type: MediaAssetType; sourceUrl: string;
+  blobName?: string | null; blobUrl?: string | null;
+  thumbnailUrl?: string | null; thumbnailBlobName?: string | null; thumbnailBlobUrl?: string | null;
+  frameBlobUrls?: string[]; mimeType?: string | null; sizeBytes?: number | null; durationSeconds?: number | null;
+  transcript?: string | null; ocrText?: string | null; summary?: string | null;
+  sentiment?: Sentiment | null; sentimentConfidence?: number | null; model?: string | null;
+  status: MediaProcessingStatus; error?: string | null; createdAt?: string | null; updatedAt?: string | null; analyzedAt?: string | null;
+}
 export interface Mention {
-  id: string; tenantId: string; topicId: string; platform: Platform;
+  id: string; tenantId: string; topicId: string; platform: Platform; sourceType?: string;
   text: string; publishedAt?: string | null; collectedAt: string; sourceUrl?: string | null;
-  author?: { username?: string; displayName?: string; followerCount?: number | null };
+  author?: { username?: string; displayName?: string; profileUrl?: string | null; followerCount?: number | null; followersCount?: number | null; verified?: boolean | null };
+  media?: MentionMediaAsset[];
   nlp: { sentiment: Sentiment; sentimentConfidence?: number | null; sentimentScore?: number; sentimentSource?: 'heuristic' | 'llm' | null; entities: { text: string; type: string }[]; keywords: string[]; language?: string; summary?: string | null };
-  metrics?: { likeCount?: number; shareCount?: number; commentCount?: number; viewCount?: number };
+  metrics?: { likeCount?: number; shareCount?: number; commentCount?: number; viewCount?: number; likes?: number | null; shares?: number | null; comments?: number | null; views?: number | null; reposts?: number | null; quotes?: number | null; engagementTotal?: number | null };
   quality?: { relevanceScore: number; automationLikelihood: number };
 }
 export interface RiskEvent {
@@ -81,6 +109,15 @@ export interface AlertEvent {
 export interface Insight {
   id: string; tenantId: string; topicId: string; title: string; summary: string;
   whyItMatters: string; recommendation: string; evidenceMentionIds: string[]; generatedAt: string;
+}
+export interface TopicSentimentStrategy {
+  topicId: string;
+  generatedAt: string;
+  mentionsAnalyzed: number;
+  llmEnabled: boolean;
+  negative: { title: string; summary: string; concerns: string[]; evidenceMentionIds: string[] };
+  positive: { title: string; summary: string; excitementDrivers: string[]; evidenceMentionIds: string[] };
+  prStrategy: { title: string; recommendation: string; actions: string[]; tone: string };
 }
 export interface IssueCluster {
   id: string; tenantId: string; topicId: string;
@@ -104,7 +141,29 @@ export interface IngestionJob {
   createdAt: string; startedAt?: string | null; finishedAt?: string | null;
 }
 export interface IngestionJobError { id: string; ingestionJobId: string; message: string; createdAt: string; }
-export interface IngestionJobDetail { job: IngestionJob; errors: IngestionJobError[]; }
+export type IngestionRunItemStatus = 'inserted' | 'skipped';
+export type IngestionRunItemReasonCode = 'stored' | 'duplicate' | 'irrelevant' | 'processing_error';
+export interface IngestionRunItem {
+  id: string;
+  status: IngestionRunItemStatus;
+  reasonCode: IngestionRunItemReasonCode;
+  reason: string;
+  mentionId?: string | null;
+  duplicateOfMentionId?: string | null;
+  platform: Platform;
+  sourceType: string;
+  sourceId?: string | null;
+  sourceUrl?: string | null;
+  title?: string | null;
+  textPreview?: string | null;
+  authorName?: string | null;
+  publishedAt?: string | null;
+  relevanceScore?: number | null;
+  reviewSource?: 'llm' | 'heuristic' | null;
+  sentiment?: Sentiment | null;
+  metrics?: Mention['metrics'];
+}
+export interface IngestionJobDetail { job: IngestionJob; errors: IngestionJobError[]; items: IngestionRunItem[]; }
 export interface Report {
   id: string; tenantId: string; topicId: string; title: string;
   status: 'pending' | 'running' | 'completed' | 'failed';

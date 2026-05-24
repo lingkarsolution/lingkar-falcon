@@ -45,6 +45,31 @@ export const uploadText = async (
   return url;
 };
 
+/** Upload a binary blob. Returns a SAS-signed read URL on success. */
+export const uploadBytes = async (
+  name: string,
+  content: Uint8Array | ArrayBuffer | Buffer,
+  contentType = 'application/octet-stream',
+): Promise<string | null> => {
+  const url = blobUrl(name);
+  if (!url) return null;
+  const body = content instanceof ArrayBuffer ? Buffer.from(content) : content;
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'x-ms-blob-type': 'BlockBlob',
+      'x-ms-version': '2021-12-02',
+      'Content-Type': contentType,
+    },
+    body,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Blob upload failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+  return url;
+};
+
 /** Download blob as text. */
 export const downloadText = async (name: string): Promise<string | null> => {
   const url = blobUrl(name);

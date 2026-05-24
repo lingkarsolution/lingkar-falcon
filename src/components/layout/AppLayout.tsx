@@ -11,18 +11,40 @@ import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { useState } from "react"
 import { useAuth } from "@/lib/auth"
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { to: "/topics", label: "Topics", icon: ListChecks },
-  { to: "/actors", label: "Actors", icon: Users },
-  { to: "/connectors", label: "Connectors", icon: Plug },
-  { to: "/ingestion", label: "Ingestion Jobs", icon: Activity },
-  { to: "/alerts", label: "Alerts", icon: Bell },
-  { to: "/reports", label: "Reports", icon: FileText },
-  { to: "/commander", label: "Commander AI", icon: MessagesSquare },
-  { to: "/audit", label: "Audit Logs", icon: ScrollText },
-  { to: "/settings", label: "Settings", icon: Settings },
+const navSections = [
+  {
+    label: "Monitor",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+      { to: "/alerts", label: "Alerts", icon: Bell },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { to: "/topics", label: "Topics", icon: ListChecks },
+      { to: "/actors", label: "Tracked Actors", icon: Users },
+      { to: "/reports", label: "Intelligence Reports", icon: FileText },
+      { to: "/commander", label: "AI Commander", icon: MessagesSquare },
+    ],
+  },
+  {
+    label: "Data Operations",
+    items: [
+      { to: "/connectors", label: "Data Sources", icon: Plug },
+      { to: "/ingestion", label: "Collection Jobs", icon: Activity },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { to: "/audit", label: "Audit Trail", icon: ScrollText },
+      { to: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ]
+
+const navItems = navSections.flatMap((section) => section.items)
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -64,24 +86,38 @@ export default function AppLayout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 space-y-0.5 p-3 overflow-y-auto">
-          {navItems.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exact}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-                )
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">{label}</span>}
-            </NavLink>
+        <nav className="flex-1 space-y-4 p-3 overflow-y-auto">
+          {navSections.map((section, sectionIndex) => (
+            <div key={section.label} className="space-y-1">
+              {sidebarOpen ? (
+                <p className="px-3 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/45">
+                  {section.label}
+                </p>
+              ) : sectionIndex > 0 ? (
+                <Separator className="my-2 bg-sidebar-border" />
+              ) : (
+                <div className="h-0" />
+              )}
+              {section.items.map(({ to, label, icon: Icon, exact }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={exact}
+                  title={sidebarOpen ? undefined : label}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                    )
+                  }
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {sidebarOpen && <span className="truncate">{label}</span>}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 

@@ -44,6 +44,7 @@ const fetchOfficialYouTubeMentions = async (ctx: IngestionContext): Promise<Cano
     if (!videoId) continue;
     const link = `https://www.youtube.com/watch?v=${videoId}`;
     const sn = it.snippet ?? {};
+    const thumbnailUrl = sn.thumbnails?.high?.url ?? sn.thumbnails?.medium?.url ?? sn.thumbnails?.default?.url ?? null;
     drafts.push({
       topicId: ctx.topicId, platform: 'youtube', sourceType: 'video',
       sourceId: videoId, sourceUrl: link, sourceUrlHash: sha256(link),
@@ -54,6 +55,14 @@ const fetchOfficialYouTubeMentions = async (ctx: IngestionContext): Promise<Cano
         profileUrl: `https://www.youtube.com/channel/${sn.channelId}`,
       },
       publishedAt: sn.publishedAt ?? null,
+      media: [{
+        id: `media_${sha256(`video:${link}`).slice(0, 16)}`,
+        type: 'video',
+        sourceUrl: link,
+        thumbnailUrl,
+        transcript: `${sn.title ?? ''}\n${sn.description ?? ''}`.trim(),
+        status: 'queued',
+      }],
       metrics: { engagementTotal: 0 },
     });
     if (drafts.length >= ctx.maxItems) break;
