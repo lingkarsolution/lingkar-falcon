@@ -59,8 +59,6 @@ const dominantSentiment = (trend: GeoTrend): SentimentKey => {
   return entries.sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
 };
 
-const maxMentionCount = (trends: GeoTrend[]) => Math.max(1, ...trends.map((trend) => trend.mentionCount));
-
 const mappableTrends = (trends: GeoTrend[]) => trends.filter((trend) => Number.isFinite(trend.latitude) && Number.isFinite(trend.longitude));
 
 const sentimentOptions: Array<{ value: SentimentKey | "all"; label: string }> = [
