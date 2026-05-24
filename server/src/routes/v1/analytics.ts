@@ -3,6 +3,7 @@ import { store } from '../../db/store.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { errorResponse, ok } from '../../lib/api.js';
 import { listMentionsForTopic, sentimentTimeseries, sentimentDistribution, platformDistribution, topEntities } from '../../services/analytics.js';
+import { cityGeoTrends } from '../../services/geoEnrichment.js';
 import type { Topic } from '../../types.js';
 
 export const registerAnalyticsRoutes = (app: FastifyInstance) => {
@@ -37,5 +38,13 @@ export const registerAnalyticsRoutes = (app: FastifyInstance) => {
     if (!t || t.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Topic not found');
     const limit = Math.min(50, Number((req.query as any)?.limit ?? 10));
     return ok(reply, topEntities(listMentionsForTopic(t.tenantId, t.id), limit));
+  });
+
+  app.get('/topics/:id/geo-trends', { preHandler: requireAuth() }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const t = store.get('topics', id) as Topic | undefined;
+    if (!t || t.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Topic not found');
+    const limit = Math.min(50, Math.max(1, Number((req.query as any)?.limit ?? 20)));
+    return ok(reply, cityGeoTrends(t.tenantId, limit, t.id));
   });
 };

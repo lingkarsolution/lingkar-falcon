@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { store } from './store.js';
 import { newId, hashPassword, verifyPassword } from '../lib/crypto.js';
 import { analyzeSentiment, computeAutomationLikelihood, computeRelevanceScore, computeEngagementTotal, extractEntities, detectEmotions, detectIntent, detectLanguage } from '../lib/nlp.js';
+import { enrichMentionsGeo, seedDefaultLocations } from '../services/geoEnrichment.js';
 import type { Connector, Mention, Platform, ConnectorMode, ConnectorStatus } from '../types.js';
 
 const now = () => new Date().toISOString();
@@ -26,7 +27,9 @@ const connectorDefaults = (): Array<{
 }> => {
   const ensemble = Boolean(config.ensembleData.token);
   const youtube = ensemble || Boolean(config.youtube.apiKey);
+  const x = ensemble || Boolean(config.x.bearerToken);
   const instagram = ensemble || Boolean(config.instagram.accessToken);
+  const threads = ensemble || Boolean(config.threads.accessToken);
   const facebook = Boolean(config.facebook.pageAccessToken);
   return [
     { platform: 'gdelt', name: 'GDELT (Global news)', mode: 'free', status: 'active', enabled: true },
@@ -34,10 +37,11 @@ const connectorDefaults = (): Array<{
     { platform: 'web', name: 'Web Search (SearXNG first, DDG fallback)', mode: 'free', status: 'active', enabled: true, monthlyBudgetUsd: 25 },
     { platform: 'reddit', name: 'Reddit Public JSON', mode: 'free', status: 'active', enabled: true },
     { platform: 'youtube', name: 'YouTube (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: youtube ? 'active' : 'not_configured', enabled: youtube, monthlyBudgetUsd: 50, credentialConfigured: youtube },
-    { platform: 'x', name: 'X API v2 (paid)', mode: 'paid_api', status: 'not_configured', enabled: false, monthlyBudgetUsd: 100 },
+    { platform: 'x', name: 'X / Twitter (EnsembleData + official fallback)', mode: 'paid_api', status: x ? 'active' : 'not_configured', enabled: x, monthlyBudgetUsd: 100, credentialConfigured: x },
     { platform: 'facebook', name: 'Facebook Pages API (official Graph)', mode: 'official_api', status: facebook ? 'active' : 'not_configured', enabled: facebook, credentialConfigured: facebook },
     { platform: 'instagram', name: 'Instagram (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: instagram ? 'active' : 'not_configured', enabled: instagram, monthlyBudgetUsd: 50, credentialConfigured: instagram },
     { platform: 'tiktok', name: 'TikTok (EnsembleData)', mode: 'paid_api', status: ensemble ? 'active' : 'not_configured', enabled: ensemble, monthlyBudgetUsd: 50, credentialConfigured: ensemble },
+    { platform: 'threads', name: 'Threads (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: threads ? 'active' : 'not_configured', enabled: threads, monthlyBudgetUsd: 50, credentialConfigured: threads },
   ];
 };
 
@@ -61,7 +65,7 @@ const migrateConnectorDefaults = async (): Promise<void> => {
         });
         continue;
       }
-      if (!['youtube', 'instagram', 'tiktok'].includes(spec.platform)) continue;
+      if (!['youtube', 'x', 'instagram', 'tiktok', 'threads'].includes(spec.platform)) continue;
       const wasOldTikTokPlaceholder = existing.platform === 'tiktok' && existing.status === 'disabled';
       const shouldPromote = spec.credentialConfigured || wasOldTikTokPlaceholder;
       if (!shouldPromote) continue;
@@ -102,12 +106,52 @@ const migrateAdverseNeutralSentiment = async (): Promise<void> => {
   if (changed > 0) await store.flush();
 };
 
+const migrateGeoStorageShape = async (): Promise<void> => {
+  const migrationId = '2026-05-23-geo-storage-shape';
+  const requiredTables = [
+    'locations',
+    'mentionGeoEnrichments',
+    'topicCityBaselines',
+    'topicCityTrends',
+    'trendSnapshots',
+    'schemaMigrations',
+  ] as const;
+  let changed = false;
+
+  for (const table of requiredTables) {
+    if (!(table in store.data) || typeof store.data[table] !== 'object' || store.data[table] === null) {
+      (store.data as any)[table] = {};
+      changed = true;
+    }
+  }
+
+  if (!store.data.schemaMigrations[migrationId]) {
+    store.put('schemaMigrations', migrationId, {
+      id: migrationId,
+      name: 'Add geo enrichment, city trend, and trend discovery storage tables',
+      appliedAt: now(),
+    });
+    changed = true;
+  }
+
+  if (changed) await store.flush();
+};
+
+const migrateGeoSeedData = async (): Promise<void> => {
+  await seedDefaultLocations();
+  for (const tenant of store.list('tenants') as Array<{ id: string }>) {
+    await enrichMentionsGeo({ tenantId: tenant.id, limit: 500 });
+  }
+};
+
 export const seedIfEmpty = async (): Promise<void> => {
   await store.load();
   if (Object.keys(store.data.tenants).length > 0) {
     await migrateOldDevAdminPassword();
     await migrateConnectorDefaults();
     await migrateAdverseNeutralSentiment();
+    await migrateGeoStorageShape();
+    await migrateGeoSeedData();
     return;
   }
 
@@ -156,14 +200,14 @@ export const seedIfEmpty = async (): Promise<void> => {
   });
 
   const samples = [
-    { text: 'The new economic policy aims to curb inflation through targeted subsidies. Analysts call it a meaningful breakthrough.', platform: 'news' as Platform, src: 'social_post' as const, hours: 2 },
-    { text: 'Many citizens complain about rising prices despite the government claims of growth. Critics blame the central bank.', platform: 'reddit' as Platform, src: 'comment' as const, hours: 4 },
-    { text: 'Excellent quarterly results from major corporations support the positive economic outlook.', platform: 'news' as Platform, src: 'news_article' as const, hours: 6 },
-    { text: 'Kebijakan ekonomi baru mendapat kritik dari sejumlah pengamat karena dianggap tidak konsisten.', platform: 'rss' as Platform, src: 'rss_item' as const, hours: 9 },
-    { text: 'Inflation crisis deepens — protests reported across several cities.', platform: 'gdelt' as Platform, src: 'news_article' as const, hours: 14 },
-    { text: 'Support for the latest economic stimulus reaches a new high in polls.', platform: 'web' as Platform, src: 'web_page' as const, hours: 24 },
-    { text: 'Scandal over policy transparency erupts after a leaked memo surfaces. Public outrage grows.', platform: 'news' as Platform, src: 'news_article' as const, hours: 18 },
-    { text: 'Dukungan masyarakat terhadap program ekonomi meningkat menurut survei terbaru.', platform: 'rss' as Platform, src: 'rss_item' as const, hours: 36 },
+    { text: 'Jakarta analysts say the new economic policy could curb inflation through targeted subsidies.', platform: 'news' as Platform, src: 'social_post' as const, hours: 2 },
+    { text: 'Warga Surabaya mengeluhkan harga kebutuhan pokok yang naik meski pemerintah menyebut ekonomi membaik.', platform: 'reddit' as Platform, src: 'comment' as const, hours: 4 },
+    { text: 'Bandung small businesses report stronger sales after the latest stimulus announcement.', platform: 'news' as Platform, src: 'news_article' as const, hours: 6 },
+    { text: 'Kebijakan ekonomi baru di Yogyakarta mendapat kritik dari sejumlah pengamat karena dianggap tidak konsisten.', platform: 'rss' as Platform, src: 'rss_item' as const, hours: 9 },
+    { text: 'Inflation crisis deepens as protests are reported around Makassar and nearby cities.', platform: 'gdelt' as Platform, src: 'news_article' as const, hours: 14 },
+    { text: 'Support for the latest economic stimulus reaches a new high among Denpasar tourism workers.', platform: 'web' as Platform, src: 'web_page' as const, hours: 24 },
+    { text: 'Scandal over policy transparency erupts after a leaked memo surfaces in Jakarta. Public outrage grows.', platform: 'news' as Platform, src: 'news_article' as const, hours: 18 },
+    { text: 'Dukungan masyarakat Semarang terhadap program ekonomi meningkat menurut survei terbaru.', platform: 'rss' as Platform, src: 'rss_item' as const, hours: 36 },
   ];
 
   for (const s of samples) {
@@ -212,5 +256,7 @@ export const seedIfEmpty = async (): Promise<void> => {
     store.put('mentions', id, m);
   }
 
+  await migrateGeoStorageShape();
+  await migrateGeoSeedData();
   await store.flush();
 };

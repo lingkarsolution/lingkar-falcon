@@ -9,6 +9,8 @@ import type {
   IngestionJob, IngestionJobError, Mention, Insight, IssueCluster, RiskEvent,
   Actor, AlertRule, AlertEvent, Report, AuditLog, Session,
   Conversation, ConversationTurn, ToolInvocation,
+  Location, MentionGeoEnrichment, TopicCityBaseline, TopicCityTrend, SchemaMigration,
+  TrendSnapshot,
 } from '../types.js';
 
 type Tables = {
@@ -18,6 +20,11 @@ type Tables = {
   connectors: Record<string, Connector>;
   credentials: Record<string, ConnectorCredential>;
   connectorUsageEvents: Record<string, ConnectorUsageEvent>;
+  locations: Record<string, Location>;
+  mentionGeoEnrichments: Record<string, MentionGeoEnrichment>;
+  topicCityBaselines: Record<string, TopicCityBaseline>;
+  topicCityTrends: Record<string, TopicCityTrend>;
+  trendSnapshots: Record<string, TrendSnapshot>;
   ingestionJobs: Record<string, IngestionJob>;
   ingestionJobErrors: Record<string, IngestionJobError>;
   mentions: Record<string, Mention>;
@@ -33,14 +40,17 @@ type Tables = {
   conversations: Record<string, Conversation>;
   conversationTurns: Record<string, ConversationTurn>;
   toolInvocations: Record<string, ToolInvocation>;
+  schemaMigrations: Record<string, SchemaMigration>;
 };
 
 const empty = (): Tables => ({
   tenants: {}, users: {}, topics: {}, connectors: {}, credentials: {},
-  connectorUsageEvents: {}, ingestionJobs: {}, ingestionJobErrors: {},
+  connectorUsageEvents: {}, locations: {}, mentionGeoEnrichments: {},
+  topicCityBaselines: {}, topicCityTrends: {}, trendSnapshots: {}, ingestionJobs: {}, ingestionJobErrors: {},
   mentions: {}, insights: {}, issueClusters: {}, riskEvents: {},
   actors: {}, alertRules: {}, alertEvents: {}, reports: {}, auditLogs: {},
   sessions: {}, conversations: {}, conversationTurns: {}, toolInvocations: {},
+  schemaMigrations: {},
 });
 
 class Store {

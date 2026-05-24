@@ -47,7 +47,7 @@ export const config = {
   searxng: { url: process.env.SEARXNG_BASE_URL ?? process.env.SEARXNG_URL ?? '' },
   tavily: { apiKey: process.env.TAVILY_API_KEY ?? '' },
 
-  // Paid public social scraping provider. Preferred for TikTok, Instagram, and YouTube when configured.
+  // Paid public social scraping provider. Preferred for TikTok, Instagram, Threads, and YouTube when configured.
   ensembleData: {
     baseUrl: process.env.ENSEMBLEDATA_BASE_URL ?? 'https://ensembledata.com/apis',
     token: process.env.ENSEMBLEDATA_TOKEN ?? '',
@@ -58,6 +58,7 @@ export const config = {
   x: { bearerToken: process.env.X_BEARER_TOKEN ?? '' },
   facebook: { pageAccessToken: process.env.FACEBOOK_PAGE_ACCESS_TOKEN ?? process.env.FACEBOOK_ACCESS_TOKEN ?? '' },
   instagram: { accessToken: process.env.INSTAGRAM_ACCESS_TOKEN ?? '' },
+  threads: { accessToken: process.env.THREADS_ACCESS_TOKEN ?? '' },
   reddit: {
     clientId: process.env.REDDIT_CLIENT_ID ?? '',
     clientSecret: process.env.REDDIT_CLIENT_SECRET ?? '',

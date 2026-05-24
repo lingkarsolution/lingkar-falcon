@@ -4,7 +4,7 @@ import { store } from '../../db/store.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { errorResponse, ok } from '../../lib/api.js';
 import { enqueueIngestion } from '../../services/ingestion.js';
-import type { IngestionJob } from '../../types.js';
+import type { IngestionJob, IngestionJobItemOutcome } from '../../types.js';
 
 const triggerSchema = z.object({
   topicId: z.string(),
@@ -14,6 +14,15 @@ const triggerSchema = z.object({
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
 });
+
+const jobWithoutItemOutcomes = (job: IngestionJob): IngestionJob => {
+  const { itemOutcomes, ...metadata } = job.metadata ?? {};
+  void itemOutcomes;
+  return { ...job, metadata };
+};
+
+const itemOutcomesFor = (job: IngestionJob): IngestionJobItemOutcome[] =>
+  Array.isArray(job.metadata?.itemOutcomes) ? job.metadata.itemOutcomes as IngestionJobItemOutcome[] : [];
 
 export const registerIngestionRoutes = (app: FastifyInstance) => {
   app.post('/trigger', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
@@ -31,7 +40,8 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
     const list = (store.list('ingestionJobs') as IngestionJob[])
       .filter((j) => j.tenantId === req.tenant!.id)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 100);
+      .slice(0, 100)
+      .map(jobWithoutItemOutcomes);
     return ok(reply, list);
   });
 
@@ -40,6 +50,6 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
     const j = store.get('ingestionJobs', id) as IngestionJob | undefined;
     if (!j || j.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Job not found');
     const errors = store.list('ingestionJobErrors').filter((e: any) => e.ingestionJobId === id);
-    return ok(reply, { job: j, errors });
+    return ok(reply, { job: jobWithoutItemOutcomes(j), errors, items: itemOutcomesFor(j) });
   });
 };

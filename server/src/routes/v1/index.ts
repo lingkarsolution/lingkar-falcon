@@ -12,11 +12,13 @@ import { registerReportRoutes } from './reports.js';
 import { registerActorRoutes } from './actors.js';
 import { registerAuditRoutes } from './audit.js';
 import { registerCommanderRoutes } from './commander.js';
+import { registerTrendRoutes } from './trends.js';
 
 export const registerV1Routes = async (app: FastifyInstance) => {
   await app.register(async (a) => registerAuthRoutes(a), { prefix: '/auth' });
   await app.register(async (a) => registerDashboardRoutes(a), { prefix: '/dashboard' });
   await app.register(async (a) => registerTopicRoutes(a), { prefix: '/topics' });
+  await app.register(async (a) => registerTrendRoutes(a), { prefix: '/trends' });
   await app.register(async (a) => registerConnectorRoutes(a), { prefix: '/connectors' });
   await app.register(async (a) => registerIngestionRoutes(a), { prefix: '/ingestion' });
   await app.register(async (a) => registerMentionRoutes(a), { prefix: '/mentions' });
