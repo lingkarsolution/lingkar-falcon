@@ -58,7 +58,7 @@ type RawMediaFilter = "all" | "image" | "video" | "other" | "none";
 
 const pct = (value: number, total: number) => total > 0 ? Math.round((value / total) * 100) : 0;
 const sentimentKeys: SentimentKey[] = ["negative", "mixed", "neutral", "positive"];
-const mappableTrends = (trends: GeoTrend[]) => trends.filter((trend) => Number.isFinite(trend.latitude) && Number.isFinite(trend.longitude));
+const mappableTrends = <T extends { latitude?: number | null; longitude?: number | null }>(trends: T[]) => trends.filter((trend) => Number.isFinite(trend.latitude) && Number.isFinite(trend.longitude));
 const dominantSentiment = (trend: GeoTrend): SentimentKey => {
   const entries = Object.entries(trend.sentimentBreakdown ?? {}) as Array<[SentimentKey, number]>;
   return entries.sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
@@ -334,7 +334,7 @@ export default function TopicDetail() {
     const highAutomation = originItems.filter((mention) => (mention.quality?.automationLikelihood ?? 0) >= 0.55).length;
     const repeatedCopy = originItems.filter((mention) => (originTextCounts.get(normalizeMentionText(mention.text)) ?? 0) >= 2).length;
     const first = originItems[0];
-    const last = originItems.at(-1);
+    const last = originItems.length > 0 ? originItems[originItems.length - 1] : undefined;
     const spreadMinutes = first && last ? Math.max(0, Math.round((mentionTimestamp(last) - mentionTimestamp(first)) / 60000)) : 0;
     const coordinationScore = originItems.length > 0 ? Math.min(100, Math.round(((highAutomation / originItems.length) * 55) + ((repeatedCopy / originItems.length) * 35) + (spreadMinutes <= 30 && originItems.length >= 8 ? 10 : 0))) : 0;
     return { uniqueProfiles, highAutomation, repeatedCopy, first, last, spreadMinutes, coordinationScore };
