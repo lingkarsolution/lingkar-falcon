@@ -5,14 +5,49 @@ import { store } from './store.js';
 import { newId, hashPassword, verifyPassword } from '../lib/crypto.js';
 import { analyzeSentiment, computeAutomationLikelihood, computeRelevanceScore, computeEngagementTotal, extractEntities, detectEmotions, detectIntent, detectLanguage } from '../lib/nlp.js';
 import { enrichMentionsGeo, seedDefaultLocations } from '../services/geoEnrichment.js';
-import type { Connector, Mention, Platform, ConnectorMode, ConnectorStatus } from '../types.js';
+import type { Connector, Mention, Platform, ConnectorMode, ConnectorStatus, Tenant, User } from '../types.js';
 
 const now = () => new Date().toISOString();
+const DEFAULT_TENANT_NAME = 'OmniSense Demo';
+const DEFAULT_TENANT_SLUG = 'omnisense-demo';
+const LEGACY_TENANT_NAME = 'CivicFalcon Demo';
+const LEGACY_TENANT_SLUG = 'civicfalcon-demo';
+const LEGACY_ADMIN_EMAIL = 'admin@civicfalcon.local';
+const INSECURE_DEV_ADMIN_PASSWORDS = ['civicfalcon', 'omnisense'];
+
+const migrateProductNameDefaults = async (): Promise<void> => {
+  let changed = false;
+
+  for (const tenant of store.list('tenants') as Tenant[]) {
+    const next = {
+      ...tenant,
+      name: tenant.name === LEGACY_TENANT_NAME ? DEFAULT_TENANT_NAME : tenant.name,
+      slug: tenant.slug === LEGACY_TENANT_SLUG ? DEFAULT_TENANT_SLUG : tenant.slug,
+    };
+    if (next.name !== tenant.name || next.slug !== tenant.slug) {
+      store.put('tenants', tenant.id, { ...next, updatedAt: now() });
+      changed = true;
+    }
+  }
+
+  const users = store.list('users') as User[];
+  const hasConfiguredAdmin = users.some((user) => user.email.toLowerCase() === config.adminEmail.toLowerCase());
+  const legacyAdmin = users.find((user) => user.email.toLowerCase() === LEGACY_ADMIN_EMAIL);
+  if (!hasConfiguredAdmin && legacyAdmin) {
+    store.put('users', legacyAdmin.id, { ...legacyAdmin, email: config.adminEmail, updatedAt: now() });
+    changed = true;
+  }
+
+  if (changed) await store.flush();
+};
 
 const migrateOldDevAdminPassword = async (): Promise<void> => {
-  const admin = (store.list('users') as any[]).find((user) => user.email?.toLowerCase() === config.adminEmail.toLowerCase());
-  if (!admin || config.adminPassword === 'civicfalcon') return;
-  if (!verifyPassword('civicfalcon', admin.passwordHash)) return;
+  const users = store.list('users') as User[];
+  const admin = users.find((user) => user.email.toLowerCase() === config.adminEmail.toLowerCase())
+    ?? users.find((user) => user.email.toLowerCase() === LEGACY_ADMIN_EMAIL);
+  if (!admin || INSECURE_DEV_ADMIN_PASSWORDS.includes(config.adminPassword)) return;
+  const oldPassword = INSECURE_DEV_ADMIN_PASSWORDS.find((password) => verifyPassword(password, admin.passwordHash));
+  if (!oldPassword) return;
   store.put('users', admin.id, {
     ...admin,
     passwordHash: hashPassword(config.adminPassword),
@@ -147,6 +182,7 @@ const migrateGeoSeedData = async (): Promise<void> => {
 export const seedIfEmpty = async (): Promise<void> => {
   await store.load();
   if (Object.keys(store.data.tenants).length > 0) {
+    await migrateProductNameDefaults();
     await migrateOldDevAdminPassword();
     await migrateConnectorDefaults();
     await migrateAdverseNeutralSentiment();
@@ -158,7 +194,7 @@ export const seedIfEmpty = async (): Promise<void> => {
   const tenantId = newId('ten');
   const userId = newId('usr');
   store.put('tenants', tenantId, {
-    id: tenantId, name: 'CivicFalcon Demo', slug: 'civicfalcon-demo',
+    id: tenantId, name: DEFAULT_TENANT_NAME, slug: DEFAULT_TENANT_SLUG,
     createdAt: now(), updatedAt: now(),
   });
   store.put('users', userId, {

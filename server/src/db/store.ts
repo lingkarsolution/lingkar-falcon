@@ -56,7 +56,18 @@ const empty = (): Tables => ({
 class Store {
   data: Tables = empty();
   private dirty = false;
-  private dataFile = path.join(config.dataDir, 'civicfalcon.json');
+  private dataFile = path.join(config.dataDir, 'omnisense.json');
+  private legacyDataFiles = [...new Set([
+    path.join(config.dataDir, 'civicfalcon.json'),
+    ...config.legacyDataDirs.map((dir) => path.join(dir, 'civicfalcon.json')),
+  ])];
+
+  private async readDataFile(): Promise<string | null> {
+    for (const candidate of [this.dataFile, ...this.legacyDataFiles]) {
+      try { return await fs.readFile(candidate, 'utf8'); } catch {}
+    }
+    return null;
+  }
 
   async load(): Promise<void> {
     if (pgEnabled()) {
@@ -70,7 +81,11 @@ class Store {
     }
     try {
       await fs.mkdir(config.dataDir, { recursive: true });
-      const raw = await fs.readFile(this.dataFile, 'utf8');
+      const raw = await this.readDataFile();
+      if (!raw) {
+        this.data = empty();
+        return;
+      }
       const parsed = JSON.parse(raw) as Tables;
       this.data = { ...empty(), ...parsed };
     } catch {

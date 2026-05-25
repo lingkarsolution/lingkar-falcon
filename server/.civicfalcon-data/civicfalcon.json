@@ -2,8 +2,8 @@
     "tenants": {
         "ten_53128a68a1de466f": {
             "id": "ten_53128a68a1de466f",
-            "name": "CivicFalcon Demo",
-            "slug": "civicfalcon-demo",
+            "name": "OmniSense Demo",
+            "slug": "omnisense-demo",
             "createdAt": "2026-05-22T15:40:11.568Z",
             "updatedAt": "2026-05-22T15:40:11.573Z"
         }
@@ -12,7 +12,7 @@
         "usr_3cdf0cf4390e46f3": {
             "id": "usr_3cdf0cf4390e46f3",
             "tenantId": "ten_53128a68a1de466f",
-            "email": "admin@civicfalcon.local",
+            "email": "admin@omnisense.local",
             "name": "Admin",
             "role": "admin",
             "passwordHash": "8acfc67341d3fb15b5bc1baf6258b639:231398d0bf000bdd0218624ea7d6908455fb1934babb81674ac5cfcbe4cd3bafefa160b3fe64a0865b98aacf70e59b0be63edcc86df64a52c672570ef26da78b",

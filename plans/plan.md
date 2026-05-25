@@ -1,19 +1,19 @@
-# CivicFalcon AI — PRD, Technical Specification, API Contracts, and Implementation Plan
+# OmniSense — PRD, Technical Specification, API Contracts, and Implementation Plan
 
 ## 0. Naming
 
-**Product name:** CivicFalcon AI  
-**Short product name:** CivicFalcon  
-**Code name / package prefix:** `civicfalcon`  
+**Product name:** OmniSense
+**Short product name:** OmniSense
+**Code name / package prefix:** `omnisense`
 **Product category:** OSINT-first Public Narrative Intelligence Platform
 
-**Naming rationale:** “CivicFalcon” sounds more like a single product name than “Civic Falcon.” It suggests public/civic awareness, fast detection, high-level visibility, and command-center intelligence.
+**Naming rationale:** “OmniSense” suggests broad sensing across public narratives, open sources, media signals, and emerging risks.
 
 ---
 
 ## 1. Executive Summary
 
-CivicFalcon AI is a rebuild of the previous Nexorus-style topic intelligence product into a modern, scalable, OSINT-first narrative intelligence platform.
+OmniSense is a rebuild of the previous Nexorus-style topic intelligence product into a modern, scalable, OSINT-first narrative intelligence platform.
 
 The v0.1 product must support **pure OSINT and lean paid API ingestion** for:
 
@@ -41,7 +41,7 @@ v0.1 must be small enough to build quickly, but structured so v1.0 can become a 
 
 ### 2.1 v0.1 Goals
 
-CivicFalcon AI v0.1 must allow users to:
+OmniSense v0.1 must allow users to:
 
 1. Create monitored topics using keywords and excluded keywords.
 2. Configure source connectors.
@@ -121,7 +121,7 @@ The v0.1 architecture must support later expansion into:
 
 ### 4.1 Product Positioning
 
-CivicFalcon AI helps analysts, public affairs teams, government teams, and communications teams detect and understand public narratives from open-source and authorized public data.
+OmniSense helps analysts, public affairs teams, government teams, and communications teams detect and understand public narratives from open-source and authorized public data.
 
 ### 4.2 Design Principles
 
@@ -2996,7 +2996,7 @@ cursor?=<cursor>
 
 ```text
 Content-Type: application/pdf
-Content-Disposition: attachment; filename="civicfalcon-report.pdf"
+Content-Disposition: attachment; filename="omnisense-report.pdf"
 ```
 
 ---
@@ -3624,7 +3624,7 @@ app.post('/api/v1/topics', async (request, reply) => {
 ## 24. Suggested Repository Structure
 
 ```text
-civicfalcon/
+omnisense/
   apps/
     web/
       src/
@@ -4226,7 +4226,7 @@ Responses are streamed over SSE. Each tool invocation gets an `invocationId`; th
 ### 32.5 System prompt (extract)
 
 ```text
-You are CivicFalcon Commander. You answer questions about public narratives
+You are OmniSense Commander. You answer questions about public narratives
 using tools. You never answer factual questions without first calling a tool.
 
 Routing rules (must follow):
@@ -4405,7 +4405,7 @@ Add a "Cost" tab on the existing Usage page showing:
 
 ## 35. Final Product Principle
 
-CivicFalcon AI should not merely show charts.
+OmniSense should not merely show charts.
 
 It should answer:
 

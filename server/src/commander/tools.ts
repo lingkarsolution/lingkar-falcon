@@ -41,7 +41,7 @@ const findTopic = (tenantId: string, idOrTitle: string): Topic | undefined => {
 // 1. search_mentions
 const searchMentions: ToolHandler<{ topicId?: string; query?: string; limit?: number; platform?: string; sentiment?: string }> = {
   name: 'search_mentions',
-  description: 'Search mentions in the CivicFalcon database by topic, text query, platform, or sentiment.',
+  description: 'Search mentions in the OmniSense database by topic, text query, platform, or sentiment.',
   inputSchema: z.object({
     topicId: z.string().optional(),
     query: z.string().optional(),

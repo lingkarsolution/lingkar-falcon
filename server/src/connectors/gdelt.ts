@@ -3,6 +3,8 @@
 import { sha256 } from '../lib/crypto.js';
 import { cache } from '../lib/cache.js';
 import { webSearch } from './search/router.js';
+import { config } from '../config.js';
+import { browserJsonHeaders } from '../lib/browserHeaders.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 
 const BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
@@ -40,10 +42,7 @@ const fetchWithTimeout = async (url: string, timeoutMs = 25_000): Promise<Respon
   const timeout = setTimeout(() => ac.abort(), timeoutMs);
   try {
     return await fetch(url, {
-      headers: {
-        Accept: 'application/json,text/plain;q=0.9,*/*;q=0.5',
-        'User-Agent': 'CivicFalcon/0.1 OSINT connector (GDELT DOC 2.0)',
-      },
+      headers: browserJsonHeaders(config.browserUserAgent),
       signal: ac.signal,
     });
   } finally {

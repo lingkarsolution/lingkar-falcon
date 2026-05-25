@@ -8,7 +8,7 @@ import { ApiError } from "@/lib/api";
 
 export default function Login() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("admin@civicfalcon.local");
+  const [email, setEmail] = useState("admin@omnisense.local");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +29,9 @@ export default function Login() {
       <Card className="w-full max-w-md relative">
         <CardHeader className="text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
-            <span className="text-primary-foreground font-bold text-lg">CF</span>
+            <span className="text-primary-foreground font-bold text-lg">OS</span>
           </div>
-          <CardTitle className="text-2xl">CivicFalcon</CardTitle>
+          <CardTitle className="text-2xl">OmniSense</CardTitle>
           <CardDescription>Public sentiment intelligence — sign in to continue</CardDescription>
         </CardHeader>
         <CardContent>
@@ -47,7 +47,7 @@ export default function Login() {
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
             {/* <p className="text-xs text-muted-foreground text-center">
-              Default admin: <code className="font-mono">admin@civicfalcon.local</code> / <code className="font-mono">changeme123</code>
+              Default admin: <code className="font-mono">admin@omnisense.local</code> / <code className="font-mono">changeme123</code>
             </p> */}
           </form>
         </CardContent>

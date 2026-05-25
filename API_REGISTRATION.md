@@ -1,4 +1,4 @@
-# CivicFalcon — API & Service Registration Checklist
+# OmniSense — API & Service Registration Checklist
 
 OSINT-first ordering. Start with the FREE row, only add paid ones when you need that platform's data.
 
@@ -50,7 +50,7 @@ No registration. Always on.
 - **TikTok** — supported through EnsembleData (`/tt/keyword/search`, `/tt/hashtag/posts`, user posts, comments, etc.). Official TikTok Research API remains a separate approval path and is not enabled by default.
 - **YouTube** — supported through EnsembleData (`/youtube/search`, hashtag search, channel videos/shorts/streams, comments). Falls back to official YouTube Data API v3 when `YOUTUBE_API_KEY` is set.
 - **Instagram** — supported through EnsembleData for public user/media/reel/post data. Falls back to Instagram Graph API for owned business/creator media when `INSTAGRAM_ACCESS_TOKEN` is set.
-- **Facebook** — not present as a tag/path in the current EnsembleData OpenAPI spec, so CivicFalcon keeps Facebook on the official Graph API.
+- **Facebook** — not present as a tag/path in the current EnsembleData OpenAPI spec, so OmniSense keeps Facebook on the official Graph API.
 
 ## Recommended on-prem / cloud infra
 

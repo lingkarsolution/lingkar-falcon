@@ -7,6 +7,7 @@ import { generateText } from 'ai';
 import { config } from '../config.js';
 import { store } from '../db/store.js';
 import { blobEnabled, uploadBytes } from '../lib/blob.js';
+import { browserMediaHeaders } from '../lib/browserHeaders.js';
 import { getLlmModel, llmAvailable } from '../commander/llm.js';
 import type { Mention, MentionMediaAsset, Sentiment, Topic } from '../types.js';
 import { topicBriefForLlm } from './topicBriefContext.js';
@@ -189,7 +190,7 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
   try {
     return await fetch(url, {
       signal: controller.signal,
-      headers: { 'user-agent': 'CivicFalcon/0.1 media-enrichment' },
+      headers: browserMediaHeaders(config.browserUserAgent),
     });
   } finally {
     clearTimeout(timer);
@@ -197,7 +198,7 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
 };
 
 const sampleAndUploadFrames = async (mention: Mention, asset: MentionMediaAsset, videoBytes: Buffer, contentType: string): Promise<string[]> => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'civicfalcon-media-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'omnisense-media-'));
   const inputPath = path.join(tempDir, `input.${extensionFor(contentType, asset.sourceUrl)}`);
   const framePattern = path.join(tempDir, 'frame-%02d.jpg');
   try {

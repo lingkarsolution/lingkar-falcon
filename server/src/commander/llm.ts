@@ -46,8 +46,8 @@ const configuredModel = (): { modelId: string; kind: ModelKind } => {
 const openrouter = () => createOpenRouter({
   apiKey: openRouterApiKey(),
   baseURL: config.llm.baseUrl || undefined,
-  appName: 'CivicFalcon Commander',
-  appUrl: 'https://civicfalcon.local',
+  appName: 'OmniSense Commander',
+  appUrl: 'https://omnisense.local',
   compatibility: 'strict',
 });
 

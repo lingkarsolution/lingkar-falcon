@@ -26,7 +26,7 @@ app.addHook('preHandler', loadSession);
 
 app.get('/api/health', async () => ({
   ok: true,
-  service: 'civicfalcon',
+  service: 'omnisense',
   storage: pgEnabled() ? 'postgres' : 'file',
   llm: llmAvailable(),
   time: new Date().toISOString(),
@@ -41,7 +41,7 @@ const webIndexFile = path.join(webDistDir, 'index.html');
 
 const getStaticFilePath = (requestUrl: string): string | null => {
   try {
-    const url = new URL(requestUrl, 'http://civicfalcon.local');
+    const url = new URL(requestUrl, 'http://omnisense.local');
     const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
     const candidate = path.resolve(webDistDir, relativePath);
     if (!candidate.startsWith(webDistDir + path.sep) && candidate !== webDistDir) return null;
@@ -54,7 +54,7 @@ const getStaticFilePath = (requestUrl: string): string | null => {
 
 const isApiRequest = (requestUrl: string): boolean => {
   try {
-    const url = new URL(requestUrl, 'http://civicfalcon.local');
+    const url = new URL(requestUrl, 'http://omnisense.local');
     return url.pathname === '/api' || url.pathname.startsWith('/api/');
   } catch {
     return requestUrl === '/api' || requestUrl.startsWith('/api/');
@@ -73,7 +73,7 @@ if (existsSync(webIndexFile)) {
     return reply.sendFile(staticFilePath ?? 'index.html');
   });
 
-  app.log.info(`Serving CivicFalcon web app from ${webDistDir}`);
+  app.log.info(`Serving OmniSense web app from ${webDistDir}`);
 } else {
   app.log.warn(`Web app build not found at ${webDistDir}; API-only mode enabled`);
 }
@@ -96,7 +96,7 @@ process.on('SIGTERM', shutdown);
 
 try {
   await app.listen({ port, host });
-  app.log.info(`CivicFalcon API running on http://${host}:${port}`);
+  app.log.info(`OmniSense API running on http://${host}:${port}`);
   app.log.info(`Storage: ${pgEnabled() ? 'PostgreSQL' : 'JSON file'} | LLM: ${llmAvailable() ? 'enabled' : 'fallback'}`);
 } catch (err) {
   app.log.error(err);

@@ -75,11 +75,11 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
-            <span className="text-primary-foreground font-bold text-sm">CF</span>
+            <span className="text-primary-foreground font-bold text-sm">OS</span>
           </div>
           {sidebarOpen && (
             <div className="min-w-0">
-              <p className="font-semibold text-sm truncate">CivicFalcon</p>
+              <p className="font-semibold text-sm truncate">OmniSense</p>
               {tenant && <p className="text-xs text-sidebar-foreground/60 truncate">{tenant.name}</p>}
             </div>
           )}
@@ -126,7 +126,7 @@ export default function AppLayout() {
           <>
             <Separator className="bg-sidebar-border" />
             <div className="p-4">
-              <p className="text-xs text-sidebar-foreground/50">CivicFalcon v0.1</p>
+              <p className="text-xs text-sidebar-foreground/50">OmniSense v0.1</p>
               <p className="text-xs text-sidebar-foreground/40">Public sentiment intelligence</p>
             </div>
           </>

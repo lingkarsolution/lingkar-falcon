@@ -1,4 +1,4 @@
-// Typed API client against the CivicFalcon /api/v1 surface.
+// Typed API client against the OmniSense /api/v1 surface.
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message);
