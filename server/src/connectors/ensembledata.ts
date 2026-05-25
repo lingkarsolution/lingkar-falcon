@@ -7,6 +7,21 @@ type JsonRecord = Record<string, unknown>;
 type ParamValue = string | number | boolean | null | undefined;
 const ENSEMBLEDATA_TIMEOUT_MS = 45_000;
 
+const ENSEMBLEDATA_STATUS_MESSAGES: Record<number, string> = {
+  422: 'Source validation failed.',
+  463: 'Source rejected the configured username or user ID.',
+  466: 'Source rejected the configured country code.',
+  471: 'Source reports the user is restricted.',
+  472: 'Source reports the user is private.',
+  473: 'Source could not find the configured user.',
+  474: 'Source reports the profile is not available in this region.',
+  491: 'Source token was not found.',
+  492: 'Source account email is not verified.',
+  493: 'Source subscription is expired.',
+  495: 'Source daily units are exhausted.',
+  500: 'Source service returned an internal error.',
+};
+
 const asRecord = (value: unknown): JsonRecord | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
 
@@ -94,6 +109,33 @@ const firstArray = (source: unknown, paths: string[]): unknown[] => {
   return [];
 };
 
+const flattenErrorText = (value: unknown, depth = 0): string[] => {
+  if (depth > 3 || value === undefined || value === null) return [];
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap((item) => flattenErrorText(item, depth + 1));
+  const record = asRecord(value);
+  if (!record) return [];
+  const preferredKeys = ['message', 'msg', 'error', 'detail', 'errors', 'type'];
+  const preferred = preferredKeys.flatMap((key) => flattenErrorText(record[key], depth + 1));
+  if (preferred.length > 0) return preferred;
+  return Object.values(record).flatMap((item) => flattenErrorText(item, depth + 1));
+};
+
+const redactSourceMessage = (message: string): string => {
+  let redacted = message.replace(/([?&]token=)[^&\s]+/gi, '$1[redacted]');
+  if (config.ensembleData.token) redacted = redacted.split(config.ensembleData.token).join('[redacted]');
+  return redacted;
+};
+
+const ensembleErrorMessage = (status: number, body: unknown): string => {
+  const statusMessage = ENSEMBLEDATA_STATUS_MESSAGES[status] ?? `Source request failed with status ${status}.`;
+  const detail = [...new Set(flattenErrorText(body).map(redactSourceMessage).filter(Boolean))]
+    .slice(0, 3)
+    .join('; ');
+  return detail ? `${statusMessage} ${detail}` : statusMessage;
+};
+
 const toIsoDate = (value: unknown): string | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     const millis = value > 10_000_000_000 ? value : value * 1000;
@@ -111,7 +153,7 @@ const toIsoDate = (value: unknown): string | null => {
 const cleanText = (...parts: Array<string | null | undefined>): string =>
   parts.map((part) => part?.trim()).filter(Boolean).join('\n');
 
-const queryFromContext = (ctx: IngestionContext): string => ctx.keywords.slice(0, 4).join(' ').trim();
+const queryFromContext = (ctx: IngestionContext): string => queryTermsFromContext(ctx).slice(0, 4).join(' ').trim();
 
 const regionFromContext = (ctx: IngestionContext): string => (ctx.regions?.[0] ?? '').slice(0, 2).toLowerCase();
 
@@ -132,6 +174,15 @@ const oldestTimestamp = (ctx: IngestionContext, fallbackDays = 30): number => {
 
 const connectorConfig = (ctx: IngestionContext): JsonRecord => asRecord(ctx.connectorConfig) ?? {};
 
+const stringConfig = (ctx: IngestionContext, keys: string[]): string | null => {
+  const cfg = connectorConfig(ctx);
+  for (const key of keys) {
+    const value = textValue(cfg[key]);
+    if (value) return value;
+  }
+  return null;
+};
+
 const stringArrayConfig = (ctx: IngestionContext, keys: string[]): string[] => {
   const cfg = connectorConfig(ctx);
   for (const key of keys) {
@@ -140,6 +191,32 @@ const stringArrayConfig = (ctx: IngestionContext, keys: string[]): string[] => {
     if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
   }
   return [];
+};
+
+const normalizeHandle = (value: string): string => {
+  let normalized = value.trim();
+  normalized = normalized.replace(/^https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|instagram\.com|facebook\.com|threads\.net)\//i, '');
+  normalized = normalized.split(/[/?#]/)[0] ?? normalized;
+  return normalized.replace(/^[@#]+/, '').trim();
+};
+
+const normalizeTopicTerm = (value: string): string => value.trim().replace(/^#+/, '').trim();
+
+const uniqueStrings = (items: string[]): string[] => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+
+const accountNameConfig = (ctx: IngestionContext, keys: string[]): string[] =>
+  uniqueStrings(stringArrayConfig(ctx, keys).map(normalizeHandle));
+
+const queryTermsFromContext = (ctx: IngestionContext): string[] => {
+  const focus = stringConfig(ctx, ['searchFocus', 'query', 'keyword']);
+  const focusTerm = focus ? focus.split(/\s+/).slice(0, 8).join(' ') : null;
+  return uniqueStrings([
+    ...ctx.keywords,
+    ...stringArrayConfig(ctx, ['includeKeywords', 'extraKeywords']),
+    ...stringArrayConfig(ctx, ['exactPhrases']),
+    ...stringArrayConfig(ctx, ['hashtags']).map(normalizeTopicTerm),
+    ...(focusTerm ? [focusTerm] : []),
+  ].map(normalizeTopicTerm));
 };
 
 const depthFor = (maxItems: number, pageSize: number, cap = 3): number =>
@@ -170,9 +247,18 @@ export const ensembleDataRequest = async (endpoint: string, params: Record<strin
   const timer = setTimeout(() => controller.abort(), ENSEMBLEDATA_TIMEOUT_MS);
   try {
     const response = await fetch(url.toString(), { signal: controller.signal });
-    if (!response.ok) throw new Error(`Source request failed with status ${response.status}`);
-    const json = await response.json() as JsonRecord;
-    return json;
+    const rawBody = await response.text();
+    let json: unknown = {};
+    if (rawBody.trim()) {
+      try {
+        json = JSON.parse(rawBody) as unknown;
+      } catch {
+        if (!response.ok) throw new Error(ensembleErrorMessage(response.status, rawBody));
+        throw new Error('Source returned invalid JSON.');
+      }
+    }
+    if (!response.ok) throw new Error(ensembleErrorMessage(response.status, json));
+    return asRecord(json) ?? {};
   } catch (error) {
     if (controller.signal.aborted) throw new Error('Source request timed out.');
     throw error;
@@ -468,15 +554,37 @@ const instagramCaption = (post: unknown): string | null => {
 const instagramShortcode = (post: unknown): string | null => firstString(post, ['shortcode', 'code']);
 
 const instagramSourceUrl = (post: unknown): string | null => {
-  const url = firstString(post, ['permalink', 'url', 'display_url']);
+  const url = firstString(post, ['permalink', 'url']);
   if (url) return url;
   const shortcode = instagramShortcode(post);
   return shortcode ? `https://www.instagram.com/p/${shortcode}/` : null;
 };
 
+const instagramPostNode = (post: unknown): unknown =>
+  asRecord(getPath(post, 'node'))
+  ?? asRecord(getPath(post, 'media'))
+  ?? asRecord(getPath(post, 'post'))
+  ?? post;
+
+const withinDateRange = (isoDate: string | null, ctx: IngestionContext): boolean => {
+  if (!isoDate) return true;
+  const time = Date.parse(isoDate);
+  if (!Number.isFinite(time)) return true;
+  if (ctx.dateFrom) {
+    const from = Date.parse(ctx.dateFrom);
+    if (Number.isFinite(from) && time < from) return false;
+  }
+  if (ctx.dateTo) {
+    const to = Date.parse(ctx.dateTo);
+    if (Number.isFinite(to) && time > to) return false;
+  }
+  return true;
+};
+
 const mapInstagramPosts = (posts: unknown[], ctx: IngestionContext, authorHint?: { id?: string; username?: string }): CanonicalMentionDraft[] => {
   const drafts: CanonicalMentionDraft[] = [];
-  for (const post of posts) {
+  for (const rawPost of posts) {
+    const post = instagramPostNode(rawPost);
     const sourceId = firstString(post, ['id', 'pk', 'media_id']);
     const sourceUrl = instagramSourceUrl(post);
     const caption = instagramCaption(post);
@@ -486,6 +594,8 @@ const mapInstagramPosts = (posts: unknown[], ctx: IngestionContext, authorHint?:
     const owner = asRecord(firstValue(post, ['owner', 'user'])) ?? {};
     const username = firstString(owner, ['username']) ?? authorHint?.username ?? null;
     const displayName = firstString(owner, ['full_name', 'name']) ?? username;
+    const publishedAt = toIsoDate(firstValue(post, ['taken_at_timestamp', 'timestamp', 'created_at', 'date']));
+    if (!withinDateRange(publishedAt, ctx)) continue;
     drafts.push({
       topicId: ctx.topicId,
       platform: 'instagram',
@@ -504,7 +614,7 @@ const mapInstagramPosts = (posts: unknown[], ctx: IngestionContext, authorHint?:
         followersCount: firstNumber(owner, ['followers', 'follower_count', 'edge_followed_by.count']),
         verified: Boolean(firstValue(owner, ['is_verified', 'verified'])),
       },
-      publishedAt: toIsoDate(firstValue(post, ['taken_at_timestamp', 'timestamp', 'created_at', 'date'])),
+      publishedAt,
       media: isVideo ? mediaAsset('video', videoUrl ?? sourceUrl, { thumbnailUrl: imageUrl, transcript: caption }) : mediaAsset('image', imageUrl, { transcript: caption }),
       metrics: {
         views: firstNumber(post, ['video_view_count', 'video_play_count', 'play_count', 'views']),
@@ -518,16 +628,22 @@ const mapInstagramPosts = (posts: unknown[], ctx: IngestionContext, authorHint?:
 };
 
 const resolveInstagramUserIds = async (ctx: IngestionContext): Promise<Array<{ id: string; username?: string }>> => {
-  const configuredIds = stringArrayConfig(ctx, ['ensembleInstagramUserIds', 'instagramUserIds', 'userIds']);
-  const configuredNames = stringArrayConfig(ctx, ['ensembleInstagramUsernames', 'instagramUsernames', 'usernames']);
+  const configuredIds = stringArrayConfig(ctx, ['ensembleInstagramUserIds', 'instagramUserIds', 'instagramUserId', 'userIds', 'userId']);
+  const configuredNames = accountNameConfig(ctx, ['ensembleInstagramUsernames', 'instagramUsernames', 'instagramUsername', 'usernames', 'username', 'handles']);
   const resolved: Array<{ id: string; username?: string }> = configuredIds.map((id) => ({ id }));
+  const errors: string[] = [];
   for (const username of configuredNames) {
-    const json = await ensembleDataRequest('instagram/user/info', { username });
-    const data = asRecord(json.data);
-    const id = firstString(data, ['pk', 'id', 'user_id', 'user.pk', 'user.id', 'user.user_id']);
-    if (id) resolved.push({ id, username });
+    try {
+      const json = await ensembleDataRequest('instagram/user/info', { username });
+      const data = asRecord(json.data);
+      const id = firstString(data, ['pk', 'id', 'user_id', 'user.pk', 'user.id', 'user.user_id']);
+      if (id) resolved.push({ id, username });
+    } catch (error) {
+      errors.push(`${username}: ${(error as Error).message}`);
+    }
   }
   if (resolved.length > 0) return resolved;
+  if (errors.length > 0) throw ensembleEmpty('instagram', `Unable to resolve configured accounts. ${errors.slice(0, 3).join('; ')}`);
 
   const query = queryFromContext(ctx);
   if (!query || connectorConfig(ctx).discoverInstagramUsersFromKeywords === false) return [];
@@ -566,15 +682,21 @@ export const fetchEnsembleInstagramMentions = async (ctx: IngestionContext): Pro
 };
 
 const twitterUserIds = async (ctx: IngestionContext): Promise<Array<{ id: string; username?: string }>> => {
-  const configuredIds = stringArrayConfig(ctx, ['ensembleTwitterUserIds', 'twitterUserIds', 'xUserIds', 'userIds']);
-  const configuredNames = stringArrayConfig(ctx, ['ensembleTwitterUsernames', 'twitterUsernames', 'xUsernames', 'usernames']);
+  const configuredIds = stringArrayConfig(ctx, ['ensembleTwitterUserIds', 'twitterUserIds', 'xUserIds', 'twitterUserId', 'xUserId', 'userIds', 'userId']);
+  const configuredNames = accountNameConfig(ctx, ['ensembleTwitterUsernames', 'twitterUsernames', 'xUsernames', 'twitterUsername', 'xUsername', 'usernames', 'username', 'handles']);
   const resolved: Array<{ id: string; username?: string }> = configuredIds.map((id) => ({ id }));
+  const errors: string[] = [];
   for (const username of configuredNames) {
-    const json = await ensembleDataRequest('twitter/user/info', { name: username });
-    const data = asRecord(json.data);
-    const id = firstString(data, ['rest_id', 'id']);
-    if (id) resolved.push({ id, username });
+    try {
+      const json = await ensembleDataRequest('twitter/user/info', { name: username });
+      const data = asRecord(json.data);
+      const id = firstString(data, ['rest_id', 'id']);
+      if (id) resolved.push({ id, username });
+    } catch (error) {
+      errors.push(`${username}: ${(error as Error).message}`);
+    }
   }
+  if (resolved.length === 0 && errors.length > 0) throw ensembleEmpty('x', `Unable to resolve configured accounts. ${errors.slice(0, 3).join('; ')}`);
   return resolved;
 };
 
@@ -603,6 +725,8 @@ export const fetchEnsembleXMentions = async (ctx: IngestionContext): Promise<Can
       const mediaUrl = firstUrl(tweet, ['legacy.extended_entities.media', 'legacy.entities.media', 'extended_entities.media', 'entities.media']);
       const videoUrl = firstUrl(tweet, ['legacy.extended_entities.media.0.video_info.variants', 'extended_entities.media.0.video_info.variants']);
       const mediaType = String(firstValue(tweet, ['legacy.extended_entities.media.0.type', 'extended_entities.media.0.type', 'legacy.entities.media.0.type']) ?? '').toLowerCase();
+      const publishedAt = toIsoDate(firstValue(tweet, ['legacy.created_at', 'created_at', 'date']));
+      if (!withinDateRange(publishedAt, ctx)) continue;
       drafts.push({
         topicId: ctx.topicId,
         platform: 'x',
@@ -621,7 +745,7 @@ export const fetchEnsembleXMentions = async (ctx: IngestionContext): Promise<Can
           followersCount: firstNumber(tweet, ['core.user_results.result.legacy.followers_count']),
           verified: Boolean(firstValue(tweet, ['core.user_results.result.is_blue_verified', 'core.user_results.result.legacy.verified'])),
         },
-        publishedAt: toIsoDate(firstValue(tweet, ['legacy.created_at', 'created_at', 'date'])),
+        publishedAt,
         media: mediaType.includes('video') || videoUrl ? mediaAsset('video', videoUrl ?? sourceUrl, { thumbnailUrl: mediaUrl, transcript: text }) : mediaAsset('image', mediaUrl, { transcript: text }),
         metrics: {
           likes,

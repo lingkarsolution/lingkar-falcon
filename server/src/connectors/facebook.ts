@@ -1,7 +1,40 @@
 // Facebook connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
+import { fetchSocialWebSearchMentions, paidSocialApiAllowed, shouldUseSocialWebSearchFirst } from './socialWebSearch.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const textList = (ctx: IngestionContext, keys: string[]): string[] => {
+  const cfg = asRecord(ctx.connectorConfig);
+  for (const key of keys) {
+    const value = cfg[key];
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const normalizePageRef = (value: string): string => {
+  let normalized = value.trim();
+  normalized = normalized.replace(/^https?:\/\/(?:www\.)?facebook\.com\//i, '');
+  normalized = normalized.split(/[/?#]/)[0] ?? normalized;
+  return normalized.replace(/^@+/, '').trim();
+};
+
+const graphErrorMessage = async (response: Response): Promise<string> => {
+  const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+  const detail = body?.error?.message?.trim();
+  return detail ? `Facebook source request failed (${response.status}): ${detail}` : `Facebook source request failed (${response.status}).`;
+};
+
+const unixTime = (value?: string): string | null => {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? String(Math.floor(time / 1000)) : null;
+};
 
 export const facebookConnector: SourceConnector = {
   platform: 'facebook',
@@ -16,14 +49,35 @@ export const facebookConnector: SourceConnector = {
     }
   },
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
-    if (!config.facebook.pageAccessToken) return [];
-    const pageIds: string[] = (ctx as any).facebookPageIds ?? ['me'];
+    if (shouldUseSocialWebSearchFirst(ctx)) {
+      const webDrafts = await fetchSocialWebSearchMentions(ctx, 'facebook');
+      if (webDrafts.length > 0 || !paidSocialApiAllowed(ctx)) return webDrafts;
+    }
+    if (!paidSocialApiAllowed(ctx)) return [];
+    if (!config.facebook.pageAccessToken) throw new Error('Source is not configured.');
+    const configuredPages = textList(ctx, ['facebookPageIds', 'facebookPageId', 'facebookPages', 'pageIds', 'pageId', 'pages'])
+      .map(normalizePageRef)
+      .filter(Boolean);
+    const configuredHandles = textList(ctx, ['facebookHandles', 'handles']).map(normalizePageRef).filter(Boolean);
+    const pageIds = [...new Set([...configuredPages, ...configuredHandles])];
+    const targets = pageIds.length > 0 ? pageIds : ['me'];
     const drafts: CanonicalMentionDraft[] = [];
-    for (const pageId of pageIds) {
-      const url = `https://graph.facebook.com/v20.0/${pageId}/posts?fields=id,message,created_time,permalink_url,reactions.summary(true),comments.summary(true),shares&limit=${Math.min(25, ctx.maxItems)}&access_token=${config.facebook.pageAccessToken}`;
-      const r = await fetch(url);
-      if (!r.ok) continue;
-      const data: any = await r.json();
+    const errors: string[] = [];
+    for (const pageId of targets) {
+      const url = new URL(`https://graph.facebook.com/v20.0/${pageId}/posts`);
+      url.searchParams.set('fields', 'id,message,created_time,permalink_url,reactions.summary(true),comments.summary(true),shares');
+      url.searchParams.set('limit', String(Math.min(25, ctx.maxItems)));
+      url.searchParams.set('access_token', config.facebook.pageAccessToken);
+      const since = unixTime(ctx.dateFrom);
+      const until = unixTime(ctx.dateTo);
+      if (since) url.searchParams.set('since', since);
+      if (until) url.searchParams.set('until', until);
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        errors.push(await graphErrorMessage(response));
+        continue;
+      }
+      const data: any = await response.json();
       for (const post of data.data ?? []) {
         const link = post.permalink_url ?? `https://facebook.com/${post.id}`;
         drafts.push({
@@ -44,7 +98,9 @@ export const facebookConnector: SourceConnector = {
         });
         if (drafts.length >= ctx.maxItems) break;
       }
+      if (drafts.length >= ctx.maxItems) break;
     }
+    if (drafts.length === 0 && errors.length > 0) throw new Error(errors.slice(0, 3).join('; '));
     return drafts;
   },
 };

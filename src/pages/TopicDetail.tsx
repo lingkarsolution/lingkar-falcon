@@ -11,11 +11,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar, CartesianGrid } from "recharts";
 import { AlertTriangle, CheckCircle2, ChevronRight, Clock3, ExternalLink, FileText, ImageIcon, Loader2, MapPinned, MessagesSquare, Network, Pencil, Play, Send, Sparkles, Shield, TrendingDown, TrendingUp, UserRound, Video, XCircle } from "lucide-react";
-import { api, type IngestionJob, type Topic, type Mention, type Insight, type IssueCluster, type Report, type TopicSentimentStrategy } from "@/lib/api";
+import { api, type Connector, type IngestionJob, type Topic, type Mention, type Insight, type Report, type TopicSentimentStrategy } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
+import { JobDetailDrawer } from "@/components/ingestion/JobDetailDrawer";
 import "leaflet/dist/leaflet.css";
 
 interface Timeseries { bucket: string; positive: number; neutral: number; negative: number; mixed: number; total: number }
@@ -55,6 +57,7 @@ type OperationState = { open: boolean; kind: OperationKind; title: string; descr
 type ReportMutationVars = { reportWindow: Window | null };
 type TopicChatMessage = { role: "user" | "assistant"; content: string; createdAt: string; llmEnabled?: boolean };
 type RawMediaFilter = "all" | "image" | "video" | "other" | "none";
+type RawSentimentFilter = Extract<SentimentKey, "positive" | "negative" | "neutral">;
 type OriginClassificationKind = "coordinated" | "mixed" | "genuine" | "unknown";
 type OriginSignal = "genuine" | "review" | "coordinated";
 type OriginSignalFilter = "all" | OriginSignal;
@@ -62,6 +65,11 @@ type OriginSignalFilter = "all" | OriginSignal;
 const pct = (value: number, total: number) => total > 0 ? Math.round((value / total) * 100) : 0;
 const sentimentKeys: SentimentKey[] = ["negative", "mixed", "neutral", "positive"];
 const sentimentFilterKeys: SentimentKey[] = ["negative", "mixed", "neutral", "positive", "unknown"];
+const rawSentimentOptions: Array<{ value: RawSentimentFilter; label: string }> = [
+  { value: "positive", label: "Positive" },
+  { value: "negative", label: "Negative" },
+  { value: "neutral", label: "Neutral" },
+];
 const originSignalOrder: OriginSignal[] = ["coordinated", "review", "genuine"];
 const originSignalLabels: Record<OriginSignal, string> = { coordinated: "Coordinated signal", review: "Needs review", genuine: "Likely genuine" };
 const mappableTrends = <T extends { latitude?: number | null; longitude?: number | null }>(trends: T[]) => trends.filter((trend) => Number.isFinite(trend.latitude) && Number.isFinite(trend.longitude));
@@ -78,13 +86,26 @@ const jobStatusVariant = (status: IngestionJob["status"]): ComponentProps<typeof
   if (status === "failed" || status === "cancelled") return "destructive";
   return "secondary";
 };
-const jobPlatform = (job: IngestionJob): string => {
+const jobPlatform = (job: IngestionJob, connectorsById?: Map<string, Connector>): string => {
   const progress = job.metadata?.ingestionProgress as { platform?: unknown } | undefined;
-  return typeof progress?.platform === "string" && progress.platform ? progress.platform : "Unknown";
+  if (typeof progress?.platform === "string" && progress.platform) return progress.platform;
+  const connector = connectorsById?.get(job.connectorId);
+  if (connector?.platform) return connector.platform;
+  return "unknown";
 };
 const jobStoredCount = (job: IngestionJob): number => {
-  const progress = job.metadata?.ingestionProgress as { storedCount?: unknown } | undefined;
-  return typeof progress?.storedCount === "number" ? progress.storedCount : numberOrZero(job.insertedCount ?? job.itemsStored);
+  if (typeof job.acceptedCount === "number") return job.acceptedCount;
+  const rejected = typeof job.rejectedCount === "number" ? job.rejectedCount : 0;
+  const progress = job.metadata?.ingestionProgress as { storedCount?: unknown; acceptedCount?: unknown } | undefined;
+  if (typeof progress?.acceptedCount === "number") return progress.acceptedCount;
+  const inserted = numberOrZero(job.insertedCount ?? job.itemsStored);
+  if (typeof progress?.storedCount === "number") return Math.max(0, progress.storedCount - rejected);
+  return Math.max(0, inserted - rejected);
+};
+const jobRejectedCount = (job: IngestionJob): number => {
+  if (typeof job.rejectedCount === "number") return job.rejectedCount;
+  const progress = job.metadata?.ingestionProgress as { rejectedCount?: unknown } | undefined;
+  return typeof progress?.rejectedCount === "number" ? progress.rejectedCount : 0;
 };
 const comparisonMeta = (current: number, previous: number): { text: string; direction: "up" | "down" | "flat" } => {
   if (previous === 0 && current === 0) return { text: "No change from last week", direction: "flat" };
@@ -105,11 +126,55 @@ const formatSpreadMinutes = (minutes: number): string => {
   const remainingHours = hours % 24;
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days} ${days === 1 ? "day" : "days"}`;
 };
-const mentionEngagement = (mention: Mention): number => mention.metrics?.engagementTotal
-  ?? (mention.metrics?.likeCount ?? mention.metrics?.likes ?? 0)
-  + (mention.metrics?.shareCount ?? mention.metrics?.shares ?? mention.metrics?.reposts ?? 0)
-  + (mention.metrics?.commentCount ?? mention.metrics?.comments ?? 0)
-  + (mention.metrics?.quotes ?? 0);
+const SOCIAL_METRIC_PLATFORMS = new Set(["x", "twitter", "threads", "instagram", "tiktok"]);
+const VIEW_METRIC_PLATFORMS = new Set(["youtube", "tiktok", "threads"]);
+const positiveMetric = (...values: Array<number | null | undefined>): number | null => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+};
+const metricLine = (label: string, value: number | null): { label: string; value: number } | null => value ? { label, value } : null;
+const mentionViews = (mention: Mention): number | null => positiveMetric(mention.metrics?.views, mention.metrics?.viewCount);
+const mentionLikes = (mention: Mention): number | null => positiveMetric(mention.metrics?.likes, mention.metrics?.likeCount);
+const mentionComments = (mention: Mention): number | null => positiveMetric(mention.metrics?.comments, mention.metrics?.commentCount);
+const mentionShares = (mention: Mention): number | null => positiveMetric(mention.metrics?.shares, mention.metrics?.shareCount);
+const mentionInteractionTotal = (mention: Mention): number => {
+  const values: Array<number | null> = [
+    mentionLikes(mention),
+    mentionComments(mention),
+    mentionShares(mention),
+    positiveMetric(mention.metrics?.reposts),
+    positiveMetric(mention.metrics?.quotes),
+    positiveMetric(mention.metrics?.saves),
+  ];
+  return values.reduce<number>((total, value) => total + (value ?? 0), 0);
+};
+const isVideoMention = (mention: Mention): boolean => mention.sourceType === "video" || (mention.media ?? []).some((asset) => asset.type === "video");
+const mentionEngagement = (mention: Mention): number | null => {
+  const interactions = mentionInteractionTotal(mention);
+  if (interactions > 0) return interactions;
+  const aggregate = positiveMetric(mention.metrics?.engagementTotal);
+  if (aggregate) return aggregate;
+  const views = mentionViews(mention);
+  if (views && (VIEW_METRIC_PLATFORMS.has(mention.platform) || isVideoMention(mention))) return views;
+  return null;
+};
+const mentionMetricLines = (mention: Mention): Array<{ label: string; value: number }> => {
+  const showViews = VIEW_METRIC_PLATFORMS.has(mention.platform) || isVideoMention(mention);
+  const socialLines = [
+    showViews ? metricLine("views", mentionViews(mention)) : null,
+    metricLine("likes", mentionLikes(mention)),
+    metricLine("comments", mentionComments(mention)),
+    metricLine("shares", mentionShares(mention)),
+    metricLine("reposts", positiveMetric(mention.metrics?.reposts)),
+    metricLine("quotes", positiveMetric(mention.metrics?.quotes)),
+    metricLine("saves", positiveMetric(mention.metrics?.saves)),
+  ].filter((line): line is { label: string; value: number } => Boolean(line));
+  if (SOCIAL_METRIC_PLATFORMS.has(mention.platform) || socialLines.length > 0) return socialLines;
+  const aggregate = positiveMetric(mention.metrics?.engagementTotal);
+  return aggregate ? [{ label: "engagement", value: aggregate }] : [];
+};
 const authorFollowers = (mention: Mention): number | null => mention.author?.followersCount ?? mention.author?.followerCount ?? null;
 const normalizeMentionText = (text: string): string => text.toLowerCase().replace(/https?:\/\/\S+/g, "").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim().slice(0, 180);
 const originAssessment = (mention: Mention, repeatedTextCount: number): { label: string; tone: "default" | "secondary" | "destructive"; note: string } => {
@@ -152,10 +217,12 @@ export default function TopicDetail() {
   const sentiment = useQuery({ queryKey: qk.sentiment(id), queryFn: () => api.get<Record<string, number>>(`/analytics/topics/${id}/sentiment`), enabled: evidenceQueriesEnabled });
   const insights = useQuery({ queryKey: qk.insights(id), queryFn: () => api.get<Insight[]>(`/ai/topics/${id}/insights`), enabled: evidenceQueriesEnabled });
   const sentimentStrategy = useQuery({ queryKey: ["topic-sentiment-strategy", id], queryFn: () => api.get<TopicSentimentStrategy | null>(`/ai/topics/${id}/sentiment-strategy`), enabled: evidenceQueriesEnabled });
-  const clusters = useQuery({ queryKey: qk.clusters(id), queryFn: () => api.get<IssueCluster[]>(`/ai/topics/${id}/clusters`), enabled: evidenceQueriesEnabled });
   const collectionJobs = useQuery({ queryKey: [...qk.ingestionJobs, "topic", id], queryFn: () => api.get<IngestionJob[]>("/ingestion/jobs"), enabled: Boolean(id) });
+  const connectorsList = useQuery({ queryKey: qk.connectors, queryFn: () => api.get<Connector[]>("/connectors") });
+  const connectorsById = useMemo(() => new Map<string, Connector>((connectorsList.data ?? []).map((c) => [c.id, c])), [connectorsList.data]);
   const [rawMediaType, setRawMediaType] = useState<RawMediaFilter>("all");
   const [rawSource, setRawSource] = useState("all");
+  const [rawSentiments, setRawSentiments] = useState<RawSentimentFilter[]>(["positive", "negative", "neutral"]);
   const mentions = useQuery({
     queryKey: ["mentions-topic", id, rawMediaType, rawSource],
     queryFn: () => {
@@ -166,11 +233,17 @@ export default function TopicDetail() {
     },
     enabled: evidenceQueriesEnabled,
   });
+  const sourceOptionMentions = useQuery({
+    queryKey: ["mentions-topic-source-options", id],
+    queryFn: () => api.get<{ items: Mention[] }>(`/mentions?topicId=${id}&limit=1000`),
+    enabled: evidenceQueriesEnabled,
+  });
   const originMentions = useQuery({ queryKey: ["mentions-topic-origins", id], queryFn: () => api.get<{ items: Mention[] }>(`/mentions?topicId=${id}&limit=500&sort=oldest&perPlatformLimit=20`), enabled: evidenceQueriesEnabled });
   const geoTrends = useQuery({ queryKey: qk.geoTrends(id), queryFn: () => api.get<GeoTrend[]>(`/analytics/topics/${id}/geo-trends?limit=20`), enabled: evidenceQueriesEnabled });
 
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [originPanelOpen, setOriginPanelOpen] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [originSourceFilter, setOriginSourceFilter] = useState("all");
   const [originSentimentFilter, setOriginSentimentFilter] = useState<"all" | SentimentKey>("all");
   const [originSignalFilter, setOriginSignalFilter] = useState<OriginSignalFilter>("all");
@@ -231,7 +304,11 @@ export default function TopicDetail() {
   });
 
   const sentEntries = Object.entries(sentiment.data ?? {}).map(([name, value]) => ({ name, value }));
-  const mentionItems = mentions.data?.items ?? [];
+  const rawMentionItems = mentions.data?.items ?? [];
+  const mentionItems = useMemo(() => {
+    const allowed = new Set<SentimentKey>(rawSentiments);
+    return rawMentionItems.filter((mention) => allowed.has(mention.nlp.sentiment));
+  }, [rawMentionItems, rawSentiments]);
   const topicCollectionJobs = useMemo(() => (collectionJobs.data ?? []).filter((job) => job.topicId === id), [collectionJobs.data, id]);
   const originItems = originMentions.data?.items ?? [];
   const originTextCounts = useMemo(() => {
@@ -325,11 +402,15 @@ export default function TopicDetail() {
     const previous = mentionItems.filter((mention) => inWindow(mention, previousStart, currentStart));
     const riskToned = (items: Mention[]) => items.filter((mention) => mention.nlp.sentiment === "negative" || mention.nlp.sentiment === "mixed").length;
     const linked = (items: Mention[]) => items.filter((mention) => Boolean(mention.sourceUrl)).length;
-    const engagement = (items: Mention[]) => items.reduce((total, mention) => total + mentionEngagement(mention), 0);
+    const engagement = (items: Mention[]) => items.reduce((total, mention) => total + (mentionEngagement(mention) ?? 0), 0);
+    const currentEngagement = engagement(current);
+    const previousEngagement = engagement(previous);
     const rows = [
       { label: "Posts collected", current: current.length, previous: previous.length, format: formatWholeNumber, accent: "bg-sky-500" },
       { label: "Risk-toned items", current: riskToned(current), previous: riskToned(previous), format: formatWholeNumber, accent: "bg-amber-500" },
-      { label: "Total engagement", current: engagement(current), previous: engagement(previous), format: formatCompact, accent: "bg-emerald-500" },
+      ...(currentEngagement > 0 || previousEngagement > 0
+        ? [{ label: "Total engagement", current: currentEngagement, previous: previousEngagement, format: formatCompact, accent: "bg-emerald-500" }]
+        : []),
       { label: "Source-linked items", current: linked(current), previous: linked(previous), format: formatWholeNumber, accent: "bg-violet-500" },
     ];
     return rows.map((row) => ({
@@ -342,33 +423,15 @@ export default function TopicDetail() {
   const rawSourceOptions = useMemo(() => {
     const values = new Set<string>();
     for (const platform of topic.data?.platforms ?? []) values.add(platform);
-    for (const mention of mentionItems) values.add(mention.platform);
+    for (const mention of sourceOptionMentions.data?.items ?? mentionItems) values.add(mention.platform);
     return [...values].filter(Boolean).sort();
-  }, [mentionItems, topic.data?.platforms]);
-  const issueRows = useMemo(() => (clusters.data ?? []).map((cluster) => {
-    const mentionCount = cluster.mentionCount ?? cluster.size ?? cluster.sampleMentionIds?.length ?? cluster.representativeMentionIds?.length ?? 0;
-    const breakdown = cluster.sentimentBreakdown ?? {
-      positive: cluster.sentiment === "positive" ? mentionCount : 0,
-      neutral: cluster.sentiment === "neutral" ? mentionCount : 0,
-      negative: cluster.sentiment === "negative" ? mentionCount : 0,
-      mixed: cluster.sentiment === "mixed" ? mentionCount : 0,
-      unknown: 0,
-    };
-    return {
-      id: cluster.id,
-      name: cluster.title ?? cluster.label ?? "Narrative cluster",
-      mentionCount,
-      riskToned: (breakdown.negative ?? 0) + (breakdown.mixed ?? 0),
-      positive: breakdown.positive ?? 0,
-      neutral: breakdown.neutral ?? 0,
-      negative: breakdown.negative ?? 0,
-      mixed: breakdown.mixed ?? 0,
-      unknown: breakdown.unknown ?? 0,
-    };
-  }), [clusters.data]);
-  const issueSentimentRows = useMemo(() => sentimentKeys
-    .map((key) => ({ name: SENTIMENT_LABELS[key], value: issueRows.reduce((total, issue) => total + issue[key], 0), key }))
-    .filter((item) => item.value > 0), [issueRows]);
+  }, [mentionItems, sourceOptionMentions.data?.items, topic.data?.platforms]);
+  useEffect(() => {
+    if (rawSource !== "all" && rawSourceOptions.length > 0 && !rawSourceOptions.includes(rawSource)) setRawSource("all");
+  }, [rawSource, rawSourceOptions]);
+  const toggleRawSentiment = (sentiment: RawSentimentFilter) => {
+    setRawSentiments((current) => current.includes(sentiment) ? current.filter((item) => item !== sentiment) : [...current, sentiment]);
+  };
   const evidenceReadiness = useMemo(() => {
     const total = mentionItems.length;
     const sourceLinked = mentionItems.filter((m) => Boolean(m.sourceUrl)).length;
@@ -485,7 +548,6 @@ export default function TopicDetail() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="raw">Recent Posts</TabsTrigger>
           <TabsTrigger value="insights">AI Insights</TabsTrigger>
-          <TabsTrigger value="issues">Issues</TabsTrigger>
           <TabsTrigger value="jobs">Collect Job History</TabsTrigger>
         </TabsList>
 
@@ -515,7 +577,7 @@ export default function TopicDetail() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2"><MapPinned className="h-4 w-4" /> Topic regional heatmap</CardTitle>
-              <p className="text-xs text-muted-foreground">City-level inferred signals for this monitored topic only.</p>
+              <p className="text-xs text-muted-foreground">Topic heatmap data is predictive by nature and based on user interaction context/user profile data.</p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="relative h-[430px] overflow-hidden rounded-lg border border-border bg-muted">
@@ -844,6 +906,19 @@ export default function TopicDetail() {
                   {rawSourceOptions.map((source) => <SelectItem key={source} value={source}>{source}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                <span className="text-xs font-medium text-muted-foreground">Sentiment</span>
+                {rawSentimentOptions.map((option) => {
+                  const checked = rawSentiments.includes(option.value);
+                  const id = `raw-sentiment-${option.value}`;
+                  return (
+                    <label key={option.value} htmlFor={id} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium">
+                      <Checkbox id={id} checked={checked} onCheckedChange={() => toggleRawSentiment(option.value)} />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -889,7 +964,7 @@ export default function TopicDetail() {
                       <th className="w-44 px-3 font-medium">Author</th>
                       <th className="w-44 px-3 font-medium">Published</th>
                       <th className="min-w-[360px] px-3 font-medium">Post</th>
-                      <th className="w-24 px-3 text-right font-medium">Engage</th>
+                      <th className="w-36 px-3 text-right font-medium">Engage</th>
                       <th className="w-32 px-3 font-medium">Media</th>
                       <th className="w-28 px-3 font-medium">Action</th>
                     </tr>
@@ -899,6 +974,7 @@ export default function TopicDetail() {
                       const media = m.media ?? [];
                       const mediaWithNotes = media.filter((asset) => asset.summary || asset.error || asset.blobUrl || asset.thumbnailBlobUrl);
                       const author = m.author?.displayName ?? m.author?.username ?? "Unknown author";
+                      const metricLines = mentionMetricLines(m);
                       return (
                         <tr key={m.id} className="border-t border-border align-top">
                           <td className="px-3 py-3 text-xs font-medium tabular-nums text-muted-foreground">#{index + 1}</td>
@@ -926,7 +1002,20 @@ export default function TopicDetail() {
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatCompact(mentionEngagement(m))}</td>
+                          <td className="px-3 py-3 text-right tabular-nums">
+                            {metricLines.length > 0 ? (
+                              <div className="space-y-1">
+                                {metricLines.slice(0, 4).map((metric) => (
+                                  <div key={metric.label}>
+                                    <div className="font-semibold">{formatCompact(metric.value)}</div>
+                                    <div className="text-[10px] font-normal text-muted-foreground">{metric.label}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs font-normal text-muted-foreground">No data</span>
+                            )}
+                          </td>
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap gap-1">
                               {media.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
@@ -982,6 +1071,7 @@ export default function TopicDetail() {
                         <th className="w-24 px-3 text-right font-medium">Fetched</th>
                         <th className="w-24 px-3 text-right font-medium">Saved</th>
                         <th className="w-24 px-3 text-right font-medium">Skipped</th>
+                        <th className="w-24 px-3 text-right font-medium">Rejected</th>
                         <th className="w-24 px-3 text-right font-medium">Errors</th>
                         <th className="w-24 px-3 font-medium">Action</th>
                       </tr>
@@ -990,21 +1080,20 @@ export default function TopicDetail() {
                       {topicCollectionJobs.map((job) => (
                         <tr key={job.id} className="border-t border-border align-middle">
                           <td className="px-3 py-3">
-                            <p className="font-mono text-xs font-medium">{job.id}</p>
+                            <button type="button" className="font-mono text-xs font-medium text-blue-600 hover:underline" onClick={() => setActiveJobId(job.id)}>{job.id}</button>
                             <p className="mt-1 text-xs text-muted-foreground capitalize">{job.jobType ?? "manual"}</p>
                           </td>
                           <td className="px-3 py-3"><Badge variant={jobStatusVariant(job.status)} className="rounded-md capitalize">{job.status}</Badge></td>
-                          <td className="px-3 py-3"><Badge variant="outline" className="rounded-md uppercase">{jobPlatform(job)}</Badge></td>
+                          <td className="px-3 py-3"><Badge variant="outline" className="rounded-md uppercase">{jobPlatform(job, connectorsById)}</Badge></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{new Date(job.createdAt).toLocaleString()}</td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "-"}</td>
                           <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.fetchedCount ?? job.itemsFetched)}</td>
                           <td className="px-3 py-3 text-right font-medium tabular-nums">{jobStoredCount(job)}</td>
                           <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.skippedCount ?? job.itemsDeduped)}</td>
-                          <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.errorCount)}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums text-muted-foreground">{jobRejectedCount(job)}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums text-muted-foreground">{numberOrZero(job.errorCount)}</td>
                           <td className="px-3 py-3">
-                            <Button asChild variant="outline" size="sm">
-                              <Link to={`/ingestions/form?jobId=${job.id}`}>Open</Link>
-                            </Button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setActiveJobId(job.id)}>View logs</Button>
                           </td>
                         </tr>
                       ))}
@@ -1032,76 +1121,6 @@ export default function TopicDetail() {
             </Card>
           ))}
           {(insights.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No AI insights yet.</CardContent></Card>}
-        </TabsContent>
-
-        <TabsContent value="issues" className="space-y-6 mt-6">
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.7fr)_minmax(0,1.3fr)] gap-6">
-            <Card>
-              <CardHeader><CardTitle className="text-base">Issue sentiment count</CardTitle></CardHeader>
-              <CardContent className="h-72">
-                {issueSentimentRows.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={issueSentimentRows} dataKey="value" nameKey="name" outerRadius={90} label>
-                        {issueSentimentRows.map((entry) => <Cell key={entry.key} fill={SENTIMENT_COLORS[entry.key]} />)}
-                      </Pie>
-                      <RTooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No issue sentiment data yet.</div>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">Issue volume by cluster</CardTitle></CardHeader>
-              <CardContent className="h-72">
-                {issueRows.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={issueRows.slice(0, 8)} layout="vertical" margin={{ top: 8, right: 16, bottom: 8, left: 24 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={120} />
-                      <RTooltip />
-                      <Legend />
-                      <Bar dataKey="riskToned" stackId="issue" name="Risk-toned" fill={SENTIMENT_COLORS.negative} radius={[0, 6, 6, 0]} />
-                      <Bar dataKey="neutral" stackId="issue" name="Neutral" fill={SENTIMENT_COLORS.neutral} radius={[0, 6, 6, 0]} />
-                      <Bar dataKey="positive" stackId="issue" name="Positive" fill={SENTIMENT_COLORS.positive} radius={[0, 6, 6, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No issue clusters yet.</div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-          {(clusters.data ?? []).map((c) => {
-            const mentionCount = c.mentionCount ?? c.size ?? c.sampleMentionIds?.length ?? c.representativeMentionIds?.length ?? 0;
-            const keywords = c.keywords ?? c.title?.split(" / ").filter(Boolean) ?? [];
-            const breakdown = c.sentimentBreakdown ?? {
-              positive: c.sentiment === "positive" ? mentionCount : 0,
-              neutral: c.sentiment === "neutral" ? mentionCount : 0,
-              negative: c.sentiment === "negative" ? mentionCount : 0,
-              mixed: c.sentiment === "mixed" ? mentionCount : 0,
-            };
-            return (
-              <Card key={c.id}>
-                <CardHeader><CardTitle className="text-base">{c.title ?? c.label ?? "Narrative cluster"}</CardTitle></CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  {c.summary && <p>{c.summary}</p>}
-                  <p className="text-muted-foreground">{mentionCount} mentions{keywords.length > 0 ? ` · keywords: ${keywords.join(", ")}` : ""}</p>
-                  <div className="flex flex-wrap gap-4 text-xs">
-                    <span className="text-emerald-600">Positive {breakdown.positive ?? 0}</span>
-                    <span className="text-slate-600">Neutral {breakdown.neutral ?? 0}</span>
-                    <span className="text-red-600">Negative {breakdown.negative ?? 0}</span>
-                    {(breakdown.mixed ?? 0) > 0 && <span className="text-amber-600">Mixed {breakdown.mixed}</span>}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-          {(clusters.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No issue clusters yet.</CardContent></Card>}
         </TabsContent>
 
       </Tabs>
@@ -1215,6 +1234,7 @@ export default function TopicDetail() {
                 const assessment = originAssessment(mention, repeatCount);
                 const authorName = mention.author?.displayName ?? mention.author?.username ?? "Unknown profile";
                 const automationPercent = Math.round((mention.quality?.automationLikelihood ?? 0) * 100);
+                const metricLines = mentionMetricLines(mention);
                 return (
                   <div key={mention.id} className={`rounded-lg border border-l-4 border-border p-4 ${originRowTone(assessment.tone)}`}>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1230,7 +1250,14 @@ export default function TopicDetail() {
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-right text-xs sm:min-w-44">
                         <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Followers</p><p className="font-semibold tabular-nums">{formatCompact(authorFollowers(mention))}</p></div>
-                        <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Engage</p><p className="font-semibold tabular-nums">{formatCompact(mentionEngagement(mention))}</p></div>
+                        <div className="rounded-md border border-border bg-background/70 px-2 py-1.5">
+                          <p className="text-muted-foreground">Metrics</p>
+                          {metricLines.length > 0 ? (
+                            <p className="font-semibold tabular-nums">{metricLines.slice(0, 2).map((metric) => `${formatCompact(metric.value)} ${metric.label}`).join(" / ")}</p>
+                          ) : (
+                            <p className="font-normal text-muted-foreground">No data</p>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <p className="mt-3 text-sm leading-6">{mention.text}</p>
@@ -1291,6 +1318,7 @@ export default function TopicDetail() {
           </div>
         </DialogContent>
       </Dialog>
+      <JobDetailDrawer jobId={activeJobId} open={Boolean(activeJobId)} onOpenChange={(open) => { if (!open) setActiveJobId(null); }} />
     </div>
     </TooltipProvider>
   );

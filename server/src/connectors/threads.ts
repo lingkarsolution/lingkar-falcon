@@ -2,6 +2,7 @@
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleThreadsMentions } from './ensembledata.js';
+import { fetchSocialWebSearchMentions, paidSocialApiAllowed, shouldUseSocialWebSearchFirst } from './socialWebSearch.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 
 const officialFields = 'id,text,media_type,media_url,permalink,timestamp,username,shortcode,thumbnail_url,has_replies,is_quote_post,is_reply';
@@ -90,7 +91,11 @@ export const threadsConnector: SourceConnector = {
   },
 
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
-    if (ensembleDataConfigured()) {
+    if (shouldUseSocialWebSearchFirst(ctx)) {
+      const drafts = await fetchSocialWebSearchMentions(ctx, 'threads');
+      if (drafts.length > 0 || !paidSocialApiAllowed(ctx)) return drafts;
+    }
+    if (ensembleDataConfigured() && paidSocialApiAllowed(ctx)) {
       try {
         const drafts = await fetchEnsembleThreadsMentions(ctx);
         if (drafts.length > 0 || !config.threads.accessToken) return drafts;
@@ -98,6 +103,7 @@ export const threadsConnector: SourceConnector = {
         if (!config.threads.accessToken) throw error;
       }
     }
+    if (!paidSocialApiAllowed(ctx)) return [];
     return fetchOfficialThreadsMentions(ctx);
   },
 };

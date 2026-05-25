@@ -17,14 +17,38 @@ const triggerSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+const sanitizeMetadata = (source: Record<string, unknown>): Record<string, unknown> => {
+  const metadata = { ...source };
+  if (typeof metadata.errorMessage === 'string') {
+    metadata.errorMessage = redactInfrastructureText(metadata.errorMessage) ?? 'Source request failed.';
+  }
+  const progress = metadata.ingestionProgress;
+  if (progress && typeof progress === 'object' && !Array.isArray(progress)) {
+    const progressRecord = progress as Record<string, unknown>;
+    const stream = progressRecord.llmStream;
+    metadata.ingestionProgress = {
+      ...progressRecord,
+      ...(stream && typeof stream === 'object' && !Array.isArray(stream)
+        ? {
+            llmStream: {
+              ...(stream as Record<string, unknown>),
+              error: typeof (stream as Record<string, unknown>).error === 'string'
+                ? redactInfrastructureText((stream as Record<string, unknown>).error as string) ?? 'Source request failed.'
+                : (stream as Record<string, unknown>).error,
+            },
+          }
+        : {}),
+    };
+  }
+  return metadata;
+};
+
 const jobWithoutItemOutcomes = (job: IngestionJob): IngestionJob => {
   const { itemOutcomes, ...metadata } = job.metadata ?? {};
   void itemOutcomes;
   return {
     ...job,
-    metadata: typeof metadata.errorMessage === 'string'
-      ? { ...metadata, errorMessage: redactInfrastructureText(metadata.errorMessage) ?? 'Source request failed.' }
-      : metadata,
+    metadata: sanitizeMetadata(metadata),
   };
 };
 
@@ -61,5 +85,31 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
       .filter((e: any) => e.ingestionJobId === id)
       .map((e: any) => ({ ...e, message: redactInfrastructureText(e.message) ?? 'Source request failed.' }));
     return ok(reply, { job: jobWithoutItemOutcomes(j), errors, items: itemOutcomesFor(j) });
+  });
+
+  app.post('/jobs/:id/cancel', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const j = store.get('ingestionJobs', id) as IngestionJob | undefined;
+    if (!j || j.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Job not found');
+    if (j.status !== 'queued') {
+      return errorResponse(reply, 409, 'NOT_CANCELLABLE', `Only queued jobs can be cancelled. Current status: ${j.status}`);
+    }
+    const updated: IngestionJob = { ...j, status: 'cancelled', finishedAt: new Date().toISOString(), metadata: { ...(j.metadata ?? {}), cancelledBy: req.user!.id, cancelledAt: new Date().toISOString() } };
+    store.put('ingestionJobs', id, updated);
+    await store.flush();
+    return ok(reply, jobWithoutItemOutcomes(updated));
+  });
+
+  app.post('/jobs/cancel-queued', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
+    const cancelled: string[] = [];
+    const cancelledAt = new Date().toISOString();
+    for (const j of store.list('ingestionJobs') as IngestionJob[]) {
+      if (j.tenantId !== req.tenant!.id) continue;
+      if (j.status !== 'queued') continue;
+      store.put('ingestionJobs', j.id, { ...j, status: 'cancelled', finishedAt: cancelledAt, metadata: { ...(j.metadata ?? {}), cancelledBy: req.user!.id, cancelledAt } });
+      cancelled.push(j.id);
+    }
+    if (cancelled.length > 0) await store.flush();
+    return ok(reply, { cancelled, count: cancelled.length });
   });
 };

@@ -4,6 +4,7 @@ import { sha256 } from '../lib/crypto.js';
 import { cache } from '../lib/cache.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleYouTubeMentions } from './ensembledata.js';
+import { fetchSocialWebSearchMentions, paidSocialApiAllowed, shouldUseSocialWebSearchFirst } from './socialWebSearch.js';
 
 const testOfficialYouTube = async (): Promise<ConnectorHealth> => {
   if (!config.youtube.apiKey) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
@@ -84,7 +85,11 @@ export const youtubeConnector: SourceConnector = {
   },
 
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
-    if (ensembleDataConfigured()) {
+    if (shouldUseSocialWebSearchFirst(ctx)) {
+      const drafts = await fetchSocialWebSearchMentions(ctx, 'youtube');
+      if (drafts.length > 0 || !paidSocialApiAllowed(ctx)) return drafts;
+    }
+    if (ensembleDataConfigured() && paidSocialApiAllowed(ctx)) {
       try {
         const drafts = await fetchEnsembleYouTubeMentions(ctx);
         if (drafts.length > 0 || !config.youtube.apiKey) return drafts;
@@ -92,6 +97,7 @@ export const youtubeConnector: SourceConnector = {
         if (!config.youtube.apiKey) throw error;
       }
     }
+    if (!paidSocialApiAllowed(ctx)) return [];
     return fetchOfficialYouTubeMentions(ctx);
   },
 };

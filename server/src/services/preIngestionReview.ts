@@ -44,11 +44,23 @@ export type PreIngestionReviewStreamEvent = {
   error?: string | null;
 };
 
-const REVIEW_BATCH_SIZE = 15;
-const REVIEW_TIMEOUT_MS = 45_000;
+const REVIEW_BATCH_SIZE = 5;
+const REVIEW_TIMEOUT_MS = 90_000;
+const REVIEW_RETRY_BATCH_SIZE = 1;
+const REVIEW_RETRY_TIMEOUT_MS = 60_000;
 const RELEVANCE_THRESHOLD = 0.55;
 const FALLBACK_RELEVANCE_THRESHOLD = 0.45;
 const SENTIMENTS = new Set<Sentiment>(['positive', 'negative', 'neutral', 'mixed', 'unknown']);
+
+type ReviewCandidate = {
+  id: string;
+  draft: CanonicalMentionDraft;
+  payload: Record<string, unknown>;
+};
+
+type LlmReviewFailure = Error & { streamedText?: string };
+
+const PRE_INGESTION_REVIEW_PROMPT = 'You are a strict pre-ingestion relevance gate for a social/news intelligence system. Decide whether each candidate is truly about the monitored topic by using the full topic brief object: identity, subject type, monitoring objectives, objective guidance, stakeholder POV, include rules, exact phrases, hashtags, handles, related entities, hard exclude rules, source/language/geo scope, audience rules, collection cost mode, alerts, and relevance mode. Treat description, POV context, objectives, and hard excludes as first-class decision rules. Hard excludes override weak matches. Reject ambiguous shared-name results unless the monitored subject is clearly the subject. Classify sentiment from the configured stakeholder POV when provided: positive means favorable for that POV, negative means harmful for that POV, mixed means both, neutral means no clear POV impact. Return only JSON: {"items":[{"id":"candidate_0","related":true|false,"relevanceScore":0.0,"sentiment":"positive|negative|neutral|mixed|unknown","confidence":0.0,"summary":"short summary if related, otherwise empty","reason":"why kept or rejected with POV/objective evidence"}]}';
 
 const chunks = <T>(items: T[], size: number): T[][] => {
   const output: T[][] = [];
@@ -122,6 +134,89 @@ const normalizeItems = (parsed: unknown, relevanceThreshold = RELEVANCE_THRESHOL
   return output;
 };
 
+const streamedTextFromError = (error: unknown): string =>
+  error instanceof Error ? ((error as LlmReviewFailure).streamedText ?? '') : '';
+
+const reviewCandidatesWithLlm = async (params: {
+  topic: Topic;
+  candidates: ReviewCandidate[];
+  relevanceThreshold: number;
+  batchNumber: number;
+  totalBatches: number;
+  timeoutMs: number;
+  onLlmStream?: (event: PreIngestionReviewStreamEvent) => void | Promise<void>;
+}): Promise<{ reviews: Map<string, PreIngestionReview>; streamedText: string }> => {
+  let streamedText = '';
+  try {
+    const response = await chatCompletion({
+      temperature: 0,
+      maxTokens: 2200,
+      jsonMode: true,
+      timeoutMs: params.timeoutMs,
+      stream: true,
+      onStreamEvent: async (event) => {
+        if (event.type === 'start') {
+          streamedText = '';
+          await params.onLlmStream?.({ status: 'streaming', batch: params.batchNumber, totalBatches: params.totalBatches, candidates: params.candidates.length, text: streamedText });
+          return;
+        }
+        if (event.type === 'text_delta') {
+          streamedText = `${streamedText}${event.text ?? ''}`.slice(-12_000);
+          await params.onLlmStream?.({ status: 'streaming', batch: params.batchNumber, totalBatches: params.totalBatches, candidates: params.candidates.length, text: streamedText });
+          return;
+        }
+        if (event.type === 'error') {
+          await params.onLlmStream?.({ status: 'failed', batch: params.batchNumber, totalBatches: params.totalBatches, candidates: params.candidates.length, text: streamedText, error: event.error ?? 'AI review stream error' });
+          return;
+        }
+        if (event.type === 'finish') {
+          await params.onLlmStream?.({ status: 'completed', batch: params.batchNumber, totalBatches: params.totalBatches, candidates: params.candidates.length, text: streamedText });
+        }
+      },
+      messages: [
+        { role: 'system', content: PRE_INGESTION_REVIEW_PROMPT },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            topic: topicBriefForLlm(params.topic),
+            relevanceThreshold: params.relevanceThreshold,
+            candidates: params.candidates.map((candidate) => candidate.payload),
+          }),
+        },
+      ],
+    });
+    return { reviews: normalizeItems(parseJson(response.choices[0]?.message.content ?? '{}'), params.relevanceThreshold), streamedText };
+  } catch (error) {
+    const failure = error instanceof Error ? error as LlmReviewFailure : new Error(String(error)) as LlmReviewFailure;
+    failure.streamedText = streamedText;
+    throw failure;
+  }
+};
+
+const appendReviewedCandidate = (result: PreIngestionReviewResult, candidate: ReviewCandidate, review: PreIngestionReview) => {
+  const reviewedDraft = { ...candidate.draft, preIngestionReview: review };
+  result.items.push({ draft: reviewedDraft, kept: review.related, review });
+  if (review.related) result.drafts.push(reviewedDraft);
+  else result.rejected++;
+};
+
+const appendLlmReviewedCandidates = (result: PreIngestionReviewResult, topic: Topic, candidates: ReviewCandidate[], reviews: Map<string, PreIngestionReview>) => {
+  for (const candidate of candidates) {
+    const review = reviews.get(candidate.id);
+    if (review) {
+      appendReviewedCandidate(result, candidate, review);
+      continue;
+    }
+    result.failed++;
+    appendReviewedCandidate(result, candidate, heuristicReview(topic, candidate.draft));
+  }
+};
+
+const appendFallbackCandidates = (result: PreIngestionReviewResult, topic: Topic, candidates: ReviewCandidate[]) => {
+  result.failed += candidates.length;
+  for (const candidate of candidates) appendReviewedCandidate(result, candidate, heuristicReview(topic, candidate.draft));
+};
+
 export const reviewDraftsBeforeIngestion = async (
   topic: Topic,
   drafts: CanonicalMentionDraft[],
@@ -184,65 +279,29 @@ export const reviewDraftsBeforeIngestion = async (
     });
 
     try {
-      const response = await chatCompletion({
-        temperature: 0,
-        maxTokens: 2600,
-        jsonMode: true,
-        timeoutMs: REVIEW_TIMEOUT_MS,
-        stream: true,
-        onStreamEvent: async (event) => {
-          if (event.type === 'start') {
-            streamedText = '';
-            await options.onLlmStream?.({ status: 'streaming', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
-            return;
-          }
-          if (event.type === 'text_delta') {
-            streamedText = `${streamedText}${event.text ?? ''}`.slice(-12_000);
-            await options.onLlmStream?.({ status: 'streaming', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
-            return;
-          }
-          if (event.type === 'error') {
-            await options.onLlmStream?.({ status: 'failed', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: event.error ?? 'AI review stream error' });
-            return;
-          }
-          if (event.type === 'finish') {
-            await options.onLlmStream?.({ status: 'completed', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
-          }
-        },
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a strict pre-ingestion relevance gate for a social/news intelligence system. Decide whether each candidate is truly about the monitored topic by using the full topic brief object: identity, subject type, monitoring objectives, objective guidance, stakeholder POV, include rules, exact phrases, hashtags, handles, related entities, hard exclude rules, source/language/geo scope, audience rules, collection cost mode, alerts, and relevance mode. Treat description, POV context, objectives, and hard excludes as first-class decision rules. Hard excludes override weak matches. Reject ambiguous shared-name results unless the monitored subject is clearly the subject. Classify sentiment from the configured stakeholder POV when provided: positive means favorable for that POV, negative means harmful for that POV, mixed means both, neutral means no clear POV impact. Return only JSON: {"items":[{"id":"candidate_0","related":true|false,"relevanceScore":0.0,"sentiment":"positive|negative|neutral|mixed|unknown","confidence":0.0,"summary":"short summary if related, otherwise empty","reason":"why kept or rejected with POV/objective evidence"}]}',
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              topic: topicBriefForLlm(topic),
-              relevanceThreshold,
-              candidates: candidates.map((candidate) => candidate.payload),
-            }),
-          },
-        ],
-      });
-      const reviewedById = normalizeItems(parseJson(response.choices[0]?.message.content ?? '{}'), relevanceThreshold);
-      for (const candidate of candidates) {
-        const review = reviewedById.get(candidate.id) ?? heuristicReview(topic, candidate.draft);
-        const reviewedDraft = { ...candidate.draft, preIngestionReview: review };
-        if (review.source === 'heuristic') result.failed++;
-        result.items.push({ draft: reviewedDraft, kept: review.related, review });
-        if (review.related) result.drafts.push(reviewedDraft);
-        else result.rejected++;
-      }
+      const { reviews } = await reviewCandidatesWithLlm({ topic, candidates, relevanceThreshold, batchNumber, totalBatches, timeoutMs: REVIEW_TIMEOUT_MS, onLlmStream: options.onLlmStream });
+      appendLlmReviewedCandidates(result, topic, candidates, reviews);
     } catch (error) {
-      result.failed += batch.length;
-      result.errors.push((error as Error).message);
-      await options.onLlmStream?.({ status: 'fallback', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: (error as Error).message });
-      for (const draft of batch) {
-        const review = heuristicReview(topic, draft);
-        const reviewedDraft = { ...draft, preIngestionReview: review };
-        result.items.push({ draft: reviewedDraft, kept: review.related, review });
-        if (review.related) result.drafts.push(reviewedDraft);
-        else result.rejected++;
+      streamedText = streamedTextFromError(error);
+      const message = (error as Error).message;
+      if (candidates.length > REVIEW_RETRY_BATCH_SIZE) {
+        result.errors.push(`${message}; retrying failed AI review batch as single-candidate requests.`);
+        await options.onLlmStream?.({ status: 'failed', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: `${message}; retrying individually.` });
+        for (const retryCandidates of chunks(candidates, REVIEW_RETRY_BATCH_SIZE)) {
+          try {
+            const { reviews } = await reviewCandidatesWithLlm({ topic, candidates: retryCandidates, relevanceThreshold, batchNumber, totalBatches, timeoutMs: REVIEW_RETRY_TIMEOUT_MS, onLlmStream: options.onLlmStream });
+            appendLlmReviewedCandidates(result, topic, retryCandidates, reviews);
+          } catch (retryError) {
+            const retryMessage = (retryError as Error).message;
+            result.errors.push(retryMessage);
+            await options.onLlmStream?.({ status: 'fallback', batch: batchNumber, totalBatches, candidates: retryCandidates.length, text: streamedTextFromError(retryError), error: retryMessage });
+            appendFallbackCandidates(result, topic, retryCandidates);
+          }
+        }
+      } else {
+        result.errors.push(message);
+        await options.onLlmStream?.({ status: 'fallback', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: message });
+        appendFallbackCandidates(result, topic, candidates);
       }
     }
   }

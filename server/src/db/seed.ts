@@ -9,7 +9,7 @@ import { publicPlatformLabel, redactInfrastructureText } from '../lib/publicSour
 import type { Connector, Mention, Platform, ConnectorMode, ConnectorStatus, Tenant, User } from '../types.js';
 
 const now = () => new Date().toISOString();
-const DEFAULT_TENANT_NAME = 'OmniSense Demo';
+const DEFAULT_TENANT_NAME = 'OmniSense By Lingkar Solution';
 const DEFAULT_TENANT_SLUG = 'omnisense-demo';
 const LEGACY_TENANT_NAME = 'CivicFalcon Demo';
 const LEGACY_TENANT_SLUG = 'civicfalcon-demo';
@@ -111,7 +111,7 @@ const migrateConnectorDefaults = async (): Promise<void> => {
           updatedAt: now(),
         });
       }
-      if (!['youtube', 'x', 'instagram', 'tiktok', 'threads'].includes(spec.platform)) continue;
+      if (!['youtube', 'x', 'facebook', 'instagram', 'tiktok', 'threads'].includes(spec.platform)) continue;
       const wasOldTikTokPlaceholder = existing.platform === 'tiktok' && existing.status === 'disabled';
       const shouldPromote = spec.credentialConfigured || wasOldTikTokPlaceholder;
       if (!shouldPromote) continue;
@@ -129,6 +129,26 @@ const migrateConnectorDefaults = async (): Promise<void> => {
     }
   }
   await store.flush();
+};
+
+const migrateIngestionJobCounters = async (): Promise<void> => {
+  let changed = 0;
+  for (const job of store.list('ingestionJobs') as Array<Record<string, any>>) {
+    const hasAccepted = typeof job.acceptedCount === 'number';
+    const hasRejected = typeof job.rejectedCount === 'number';
+    if (hasAccepted && hasRejected) continue;
+    const progress = job.metadata?.ingestionProgress as { acceptedCount?: number; rejectedCount?: number } | undefined;
+    const insertedCount = typeof job.insertedCount === 'number' ? job.insertedCount : 0;
+    const rejectedFromProgress = typeof progress?.rejectedCount === 'number' ? progress.rejectedCount : 0;
+    const acceptedFromProgress = typeof progress?.acceptedCount === 'number' ? progress.acceptedCount : Math.max(0, insertedCount - rejectedFromProgress);
+    store.put('ingestionJobs', job.id, {
+      ...job,
+      acceptedCount: hasAccepted ? job.acceptedCount : acceptedFromProgress,
+      rejectedCount: hasRejected ? job.rejectedCount : rejectedFromProgress,
+    } as any);
+    changed++;
+  }
+  if (changed > 0) await store.flush();
 };
 
 const migrateAdverseNeutralSentiment = async (): Promise<void> => {
@@ -200,6 +220,7 @@ export const seedIfEmpty = async (): Promise<void> => {
     await migrateAdverseNeutralSentiment();
     await migrateGeoStorageShape();
     await migrateGeoSeedData();
+    await migrateIngestionJobCounters();
     return;
   }
 

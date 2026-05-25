@@ -3,6 +3,41 @@ import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleInstagramMentions } from './ensembledata.js';
+import { fetchSocialWebSearchMentions, paidSocialApiAllowed, shouldUseSocialWebSearchFirst } from './socialWebSearch.js';
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const textList = (ctx: IngestionContext, keys: string[]): string[] => {
+  const cfg = asRecord(ctx.connectorConfig);
+  for (const key of keys) {
+    const value = cfg[key];
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const graphErrorMessage = async (response: Response, label: string): Promise<string> => {
+  const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+  const detail = body?.error?.message?.trim();
+  return detail ? `${label} source request failed (${response.status}): ${detail}` : `${label} source request failed (${response.status}).`;
+};
+
+const withinDateRange = (value: string | null | undefined, ctx: IngestionContext): boolean => {
+  if (!value) return true;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return true;
+  if (ctx.dateFrom) {
+    const from = Date.parse(ctx.dateFrom);
+    if (Number.isFinite(from) && time < from) return false;
+  }
+  if (ctx.dateTo) {
+    const to = Date.parse(ctx.dateTo);
+    if (Number.isFinite(to) && time > to) return false;
+  }
+  return true;
+};
 
 const testOfficialInstagram = async (): Promise<ConnectorHealth> => {
   if (!config.instagram.accessToken) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
@@ -16,34 +51,38 @@ const testOfficialInstagram = async (): Promise<ConnectorHealth> => {
 };
 
 const fetchOfficialInstagramMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
-  if (!config.instagram.accessToken) return [];
-  const configured = ctx.connectorConfig ?? {};
-  const igUserId = typeof configured.instagramUserId === 'string' ? configured.instagramUserId : 'me';
-  const url = `https://graph.facebook.com/v20.0/${igUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=${Math.min(25, ctx.maxItems)}&access_token=${config.instagram.accessToken}`;
-  const r = await fetch(url);
-  if (!r.ok) return [];
-  const data: any = await r.json();
+  if (!config.instagram.accessToken) throw new Error('Source is not configured.');
+  const userIds = textList(ctx, ['instagramUserIds', 'instagramUserId', 'userIds', 'userId']);
+  const targets = userIds.length > 0 ? userIds : ['me'];
   const drafts: CanonicalMentionDraft[] = [];
-  for (const m of data.data ?? []) {
-    drafts.push({
-      topicId: ctx.topicId, platform: 'instagram', sourceType: 'social_post',
-      sourceId: m.id, sourceUrl: m.permalink, sourceUrlHash: sha256(m.permalink ?? m.id),
-      title: null, text: m.caption ?? '', language: null,
-      author: { username: igUserId },
-      publishedAt: m.timestamp ?? null,
-      media: m.media_url ? [{
-        id: `media_${sha256(`${m.media_type}:${m.media_url}`).slice(0, 16)}`,
-        type: String(m.media_type ?? '').toUpperCase().includes('VIDEO') ? 'video' : 'image',
-        sourceUrl: m.media_url,
-        thumbnailUrl: m.thumbnail_url ?? null,
-        transcript: m.caption ?? null,
-        status: 'queued',
-      }] : [],
-      metrics: {
-        likes: m.like_count ?? 0, comments: m.comments_count ?? 0,
-        engagementTotal: (m.like_count ?? 0) + (m.comments_count ?? 0),
-      },
-    });
+  for (const instagramUserId of targets) {
+    const url = `https://graph.facebook.com/v20.0/${instagramUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=${Math.min(25, ctx.maxItems)}&access_token=${config.instagram.accessToken}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(await graphErrorMessage(response, 'Instagram'));
+    const data: any = await response.json();
+    for (const media of data.data ?? []) {
+      if (!withinDateRange(media.timestamp, ctx)) continue;
+      drafts.push({
+        topicId: ctx.topicId, platform: 'instagram', sourceType: 'social_post',
+        sourceId: media.id, sourceUrl: media.permalink, sourceUrlHash: sha256(media.permalink ?? media.id),
+        title: null, text: media.caption ?? '', language: null,
+        author: { username: instagramUserId },
+        publishedAt: media.timestamp ?? null,
+        media: media.media_url ? [{
+          id: `media_${sha256(`${media.media_type}:${media.media_url}`).slice(0, 16)}`,
+          type: String(media.media_type ?? '').toUpperCase().includes('VIDEO') ? 'video' : 'image',
+          sourceUrl: media.media_url,
+          thumbnailUrl: media.thumbnail_url ?? null,
+          transcript: media.caption ?? null,
+          status: 'queued',
+        }] : [],
+        metrics: {
+          likes: media.like_count ?? 0, comments: media.comments_count ?? 0,
+          engagementTotal: (media.like_count ?? 0) + (media.comments_count ?? 0),
+        },
+      });
+      if (drafts.length >= ctx.maxItems) break;
+    }
     if (drafts.length >= ctx.maxItems) break;
   }
   return drafts;
@@ -62,7 +101,11 @@ export const instagramConnector: SourceConnector = {
     return testOfficialInstagram();
   },
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
-    if (ensembleDataConfigured()) {
+    if (shouldUseSocialWebSearchFirst(ctx)) {
+      const drafts = await fetchSocialWebSearchMentions(ctx, 'instagram');
+      if (drafts.length > 0 || !paidSocialApiAllowed(ctx)) return drafts;
+    }
+    if (ensembleDataConfigured() && paidSocialApiAllowed(ctx)) {
       try {
         const drafts = await fetchEnsembleInstagramMentions(ctx);
         if (drafts.length > 0 || !config.instagram.accessToken) return drafts;
@@ -70,6 +113,7 @@ export const instagramConnector: SourceConnector = {
         if (!config.instagram.accessToken) throw error;
       }
     }
+    if (!paidSocialApiAllowed(ctx)) return [];
     return fetchOfficialInstagramMentions(ctx);
   },
 };

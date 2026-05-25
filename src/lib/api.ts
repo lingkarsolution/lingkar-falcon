@@ -148,7 +148,7 @@ export interface Mention {
   author?: { username?: string; displayName?: string; profileUrl?: string | null; followerCount?: number | null; followersCount?: number | null; verified?: boolean | null };
   media?: MentionMediaAsset[];
   nlp: { sentiment: Sentiment; sentimentConfidence?: number | null; sentimentScore?: number; sentimentSource?: 'heuristic' | 'llm' | null; entities: { text: string; type: string }[]; keywords: string[]; language?: string; summary?: string | null };
-  metrics?: { likeCount?: number; shareCount?: number; commentCount?: number; viewCount?: number; likes?: number | null; shares?: number | null; comments?: number | null; views?: number | null; reposts?: number | null; quotes?: number | null; engagementTotal?: number | null };
+  metrics?: { likeCount?: number; shareCount?: number; commentCount?: number; viewCount?: number; likes?: number | null; shares?: number | null; comments?: number | null; views?: number | null; reposts?: number | null; quotes?: number | null; saves?: number | null; engagementTotal?: number | null };
   quality?: { relevanceScore: number; automationLikelihood: number };
 }
 export interface RiskEvent {
@@ -191,7 +191,7 @@ export interface Actor {
 export interface IngestionJob {
   id: string; tenantId: string; topicId: string; connectorId: string;
   jobType?: string; status: 'queued' | 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  fetchedCount?: number; insertedCount?: number; skippedCount?: number; errorCount?: number;
+  fetchedCount?: number; insertedCount?: number; acceptedCount?: number; rejectedCount?: number; skippedCount?: number; errorCount?: number;
   itemsFetched?: number; itemsStored?: number; itemsDeduped?: number;
   metadata?: Record<string, unknown>;
   createdAt: string; startedAt?: string | null; finishedAt?: string | null;

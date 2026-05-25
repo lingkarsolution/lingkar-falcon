@@ -22,9 +22,8 @@ const navSections = [
   {
     label: "Intelligence",
     items: [
-      { to: "/topics", label: "Topics", icon: ListChecks },
-      { to: "/reports", label: "Intelligence Reports", icon: FileText },
-      { to: "/commander", label: "AI Commander", icon: MessagesSquare },
+      { to: "/topics", label: "Topics/Actors Monitoring", icon: ListChecks },
+      { to: "/commander", label: "OmniSense Agent", icon: MessagesSquare },
     ],
   },
   {
@@ -32,6 +31,7 @@ const navSections = [
     items: [
       { to: "/connectors", label: "Data Sources", icon: Plug },
       { to: "/ingestion", label: "Collect Posts Jobs", icon: Activity },
+      { to: "/reports", label: "Per Topic Job Reports", icon: FileText },
     ],
   },
   {
@@ -79,7 +79,7 @@ export default function AppLayout() {
           {sidebarOpen && (
             <div className="min-w-0">
               <p className="font-semibold text-sm truncate">OmniSense</p>
-              {tenant && <p className="text-xs text-sidebar-foreground/60 truncate">{tenant.name}</p>}
+              {tenant && <p className="text-xs text-sidebar-foreground/60 truncate">By Lingkar Solution</p>}
             </div>
           )}
         </div>

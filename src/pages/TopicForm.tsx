@@ -36,12 +36,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { api, type Topic, type TopicMonitoringBrief } from "@/lib/api";
+import { api, type Topic, type TopicMonitoringBrief, type TopicSubjectType } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
+import { topicSubjectOptions as subjectOptions } from "@/lib/topicSubjects";
 import { cn } from "@/lib/utils";
 
 type StepId = "identity" | "perspective" | "objectives" | "query" | "sources" | "audience" | "collection" | "review";
-type SubjectType = "public_figure" | "organization" | "issue" | "group" | "brand" | "event" | "normal_user" | "general";
+type SubjectType = TopicSubjectType;
 type MonitoringObjective = "reputation" | "early_warning" | "sentiment" | "misinformation" | "campaign" | "competitor" | "complaints";
 type PerspectiveRole = "topic_owner" | "government" | "opposition" | "public" | "competitor" | "media" | "neutral_observer" | "custom";
 type GeoMode = "mentioned" | "author" | "both";
@@ -96,17 +97,6 @@ const steps: Array<{ id: StepId; title: string; icon: LucideIcon }> = [
   { id: "audience", title: "Audience", icon: Users },
   { id: "collection", title: "Rules", icon: SlidersHorizontal },
   { id: "review", title: "Review", icon: ShieldCheck },
-];
-
-const subjectOptions: Array<{ value: SubjectType; label: string; helper: string }> = [
-  { value: "public_figure", label: "Public figure", helper: "People with public visibility" },
-  { value: "organization", label: "Organization", helper: "Companies, parties, agencies" },
-  { value: "issue", label: "Issue", helper: "Policy, crisis, public concern" },
-  { value: "group", label: "Group", helper: "Communities or movements" },
-  { value: "brand", label: "Brand / product", helper: "Products, services, competitors" },
-  { value: "event", label: "Event", helper: "Campaigns, launches, incidents" },
-  { value: "normal_user", label: "Normal user", helper: "Individual account monitoring" },
-  { value: "general", label: "General topic", helper: "Broad keyword discovery" },
 ];
 
 const objectiveOptions: Array<{ value: MonitoringObjective; label: string; helper: string }> = [
@@ -522,11 +512,12 @@ function TagEditor({ label, value, onChange, placeholder, prefix }: { label: str
   );
 }
 
-function ChoiceGrid<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: string; helper?: string }>; onChange: (value: T) => void }) {
+function ChoiceGrid<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: string; helper?: string; icon?: LucideIcon }>; onChange: (value: T) => void }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       {options.map((option) => {
         const active = option.value === value;
+        const Icon = option.icon;
         return (
           <button
             key={option.value}
@@ -537,9 +528,12 @@ function ChoiceGrid<T extends string>({ value, options, onChange }: { value: T; 
               active ? "border-primary bg-primary/10 text-foreground" : "border-border bg-card hover:bg-muted/40"
             )}
           >
-            <span className="flex items-center gap-2 text-sm font-medium">
-              {active && <Check className="h-4 w-4 text-primary" />}
-              {option.label}
+            <span className="flex items-start justify-between gap-2 text-sm font-medium">
+              <span className="flex min-w-0 items-center gap-2">
+                {Icon && <Icon className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground")} />}
+                <span className="truncate">{option.label}</span>
+              </span>
+              {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
             </span>
             {option.helper && <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.helper}</span>}
           </button>
@@ -840,7 +834,16 @@ export default function TopicForm() {
                     <FieldShell label="Subject type">
                       <Select value={draft.subjectType} onValueChange={(subjectType) => updateDraft({ subjectType: subjectType as SubjectType })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>{subjectOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                        <SelectContent>
+                          {subjectOptions.map((option) => {
+                            const Icon = option.icon;
+                            return (
+                              <SelectItem key={option.value} value={option.value}>
+                                <span className="flex items-center gap-2"><Icon className="h-4 w-4 text-muted-foreground" />{option.label}</span>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
                       </Select>
                     </FieldShell>
                   </div>

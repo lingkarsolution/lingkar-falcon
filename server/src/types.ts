@@ -316,7 +316,13 @@ export type IngestionJob = {
   jobType: IngestionJobType; status: IngestionJobStatus;
   requestedBy?: string | null;
   startedAt?: string | null; finishedAt?: string | null;
-  fetchedCount: number; insertedCount: number; skippedCount: number; errorCount: number;
+  // fetchedCount = drafts retrieved from source.
+  // insertedCount = total mentions persisted (acceptedCount + rejectedCount, kept for back-compat).
+  // acceptedCount = kept by relevance review and stored as primary mentions.
+  // rejectedCount = rejected by relevance review but stored as evidence.
+  // skippedCount = duplicates only.
+  // errorCount = errors encountered during the run.
+  fetchedCount: number; insertedCount: number; acceptedCount: number; rejectedCount: number; skippedCount: number; errorCount: number;
   metadata: Record<string, unknown>;
   createdAt: string;
 };

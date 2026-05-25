@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Send, MessagesSquare, BrainCircuit, Loader2, CheckCircle2, AlertTriangle, Globe2 } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sparkles, Send, MessagesSquare, BrainCircuit, Loader2, CheckCircle2, AlertTriangle, Globe2, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
@@ -65,43 +66,69 @@ const stringify = (value: unknown, limit = 5000) => {
 const groupTurns = (turns: ConversationTurn[]): ChatBubble[] => {
   const bubbles: ChatBubble[] = [];
   let pendingTools: ToolCallView[] = [];
+  let activeAssistant: ChatBubble | null = null;
 
-  for (const turn of turns) {
+  const orderedTurns = [...turns].sort((a, b) => {
+    const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    const roleOrder: Record<ConversationTurn["role"], number> = { user: 0, tool: 1, assistant: 2, system: 3 };
+    return roleOrder[a.role] - roleOrder[b.role];
+  });
+
+  const flushAssistant = () => {
+    if (!activeAssistant) return;
+    bubbles.push(activeAssistant);
+    activeAssistant = null;
+  };
+
+  const flushOrphanTools = (id: string) => {
+    if (!pendingTools.length) return;
+    bubbles.push({ id, role: "assistant", content: "", tools: pendingTools });
+    pendingTools = [];
+  };
+
+  const toolFromTurn = (turn: ConversationTurn): ToolCallView => {
+    const toolContent = turn.content as { name?: string; input?: unknown; output?: unknown; status?: ToolStatus } | null;
+    return {
+      id: turn.id,
+      toolName: toolContent?.name ?? "tool",
+      input: toolContent?.input,
+      output: toolContent?.output,
+      status: toolContent?.status ?? "ok",
+      createdAt: turn.createdAt,
+    };
+  };
+
+  for (const turn of orderedTurns) {
     if (turn.role === "user") {
-      if (pendingTools.length) {
-        bubbles.push({ id: `tools-${turn.id}`, role: "assistant", content: "", tools: pendingTools });
-        pendingTools = [];
-      }
+      flushAssistant();
+      flushOrphanTools(`tools-${turn.id}`);
       bubbles.push({ id: turn.id, role: "user", content: stringify(turn.content), createdAt: turn.createdAt });
       continue;
     }
 
     if (turn.role === "tool") {
-      const toolContent = turn.content as { name?: string; input?: unknown; output?: unknown; status?: ToolStatus } | null;
-      pendingTools.push({
-        id: turn.id,
-        toolName: toolContent?.name ?? "tool",
-        input: toolContent?.input,
-        output: toolContent?.output,
-        status: toolContent?.status ?? "ok",
-        createdAt: turn.createdAt,
-      });
+      const toolCall = toolFromTurn(turn);
+      if (activeAssistant) activeAssistant = { ...activeAssistant, tools: upsertTool(activeAssistant.tools, toolCall) };
+      else pendingTools.push(toolCall);
       continue;
     }
 
     if (turn.role === "assistant") {
-      bubbles.push({
+      flushAssistant();
+      activeAssistant = {
         id: turn.id,
         role: "assistant",
         content: stringify(turn.content),
         createdAt: turn.createdAt,
         tools: pendingTools,
-      });
+      };
       pendingTools = [];
     }
   }
 
-  if (pendingTools.length) bubbles.push({ id: `tools-tail-${pendingTools[0]?.id}`, role: "assistant", content: "", tools: pendingTools });
+  flushAssistant();
+  flushOrphanTools(`tools-tail-${pendingTools[0]?.id}`);
   return bubbles;
 };
 
@@ -184,6 +211,24 @@ function ToolPanel({ toolCall }: { toolCall: ToolCallView }) {
   );
 }
 
+function ToolCallsAccordion({ tools, streaming }: { tools: ToolCallView[]; streaming?: boolean }) {
+  const runningCount = tools.filter((toolCall) => toolCall.status === "running").length;
+  const failedCount = tools.filter((toolCall) => toolCall.status !== "ok" && toolCall.status !== "running").length;
+  return (
+    <details className="mb-3 rounded-md border border-border bg-background/80 text-xs">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 outline-none">
+        {runningCount > 0 || streaming ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : failedCount > 0 ? <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+        <span className="min-w-0 flex-1 truncate font-medium">Tool calls</span>
+        <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">{tools.length}</Badge>
+        {failedCount > 0 && <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px] text-amber-600">{failedCount} failed</Badge>}
+      </summary>
+      <div className="space-y-2 border-t border-border p-2">
+        {tools.map((toolCall) => <ToolPanel key={toolCall.id} toolCall={toolCall} />)}
+      </div>
+    </details>
+  );
+}
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -239,7 +284,7 @@ function AssistantBubble({ bubble }: { bubble: ChatBubble }) {
             <p className="border-t border-violet-200 px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap text-violet-900 dark:border-violet-900 dark:text-violet-100">{bubble.thinking}</p>
           </details>
         )}
-        {!!bubble.tools?.length && <div className="mb-3 space-y-2">{bubble.tools.map((toolCall) => <ToolPanel key={toolCall.id} toolCall={toolCall} />)}</div>}
+        {!!bubble.tools?.length && <ToolCallsAccordion tools={bubble.tools} streaming={bubble.streaming} />}
         {bubble.content ? (
           <div className="min-w-0 text-foreground">
             <MarkdownContent content={bubble.content} />
@@ -270,6 +315,7 @@ export default function Commander() {
   const [messages, setMessages] = useState<ChatBubble[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [deletingConversation, setDeletingConversation] = useState<Conversation | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const assistantIdRef = useRef<string>("");
   const userIdRef = useRef<string>("");
@@ -288,6 +334,20 @@ export default function Commander() {
   });
 
   const persistedMessages = useMemo(() => groupTurns(turns.data?.turns ?? []), [turns.data?.turns]);
+
+  const deleteConversation = useMutation({
+    mutationFn: (conversationId: string) => api.delete<{ deleted: string }>(`/commander/conversations/${conversationId}`),
+    onSuccess: (_result, conversationId) => {
+      qc.invalidateQueries({ queryKey: qk.conversations });
+      qc.removeQueries({ queryKey: qk.conversation(conversationId) });
+      if (convId === conversationId) {
+        setConvId(null);
+        setMessages([]);
+        setStreamError(null);
+      }
+      setDeletingConversation(null);
+    },
+  });
 
   useEffect(() => {
     if (!streaming) setMessages(persistedMessages);
@@ -432,17 +492,35 @@ export default function Commander() {
         <div className="px-2 pb-1 pt-4 text-xs font-medium uppercase text-muted-foreground">History</div>
         <div className="space-y-1 overflow-y-auto pr-1">
           {(conversations.data ?? []).map((conversation) => (
-            <button
+            <div
               key={conversation.id}
-              onClick={() => { if (!streaming) setConvId(conversation.id); }}
               className={cn(
-                "w-full rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent",
+                "group flex items-center rounded-md text-sm transition-colors hover:bg-accent",
                 convId === conversation.id && "bg-accent",
               )}
             >
-              <p className="truncate font-medium">{conversation.title}</p>
-              <p className="text-[10px] text-muted-foreground">{new Date(conversation.updatedAt).toLocaleDateString()}</p>
-            </button>
+              <button
+                type="button"
+                onClick={() => { if (!streaming) setConvId(conversation.id); }}
+                disabled={streaming}
+                className="min-w-0 flex-1 px-3 py-2 text-left disabled:cursor-not-allowed"
+              >
+                <p className="truncate font-medium">{conversation.title}</p>
+                <p className="text-[10px] text-muted-foreground">{new Date(conversation.updatedAt).toLocaleDateString()}</p>
+              </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn("mr-1 h-8 w-8 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100", convId === conversation.id && "opacity-100")}
+                onClick={() => setDeletingConversation(conversation)}
+                disabled={streaming || deleteConversation.isPending}
+                aria-label={`Delete ${conversation.title}`}
+                title="Delete thread"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
           ))}
         </div>
       </aside>
@@ -498,6 +576,28 @@ export default function Commander() {
           </div>
         </footer>
       </div>
+
+      <Dialog open={Boolean(deletingConversation)} onOpenChange={(open) => { if (!open && !deleteConversation.isPending) setDeletingConversation(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete chat thread</DialogTitle>
+            <DialogDescription>
+              This removes “{deletingConversation?.title ?? "Untitled chat"}” from your Commander history, including saved messages and tool calls.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingConversation(null)} disabled={deleteConversation.isPending}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deletingConversation && deleteConversation.mutate(deletingConversation.id)}
+              disabled={!deletingConversation || deleteConversation.isPending}
+            >
+              {deleteConversation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

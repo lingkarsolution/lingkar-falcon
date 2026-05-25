@@ -17,10 +17,9 @@ import { api, type Connector, type IngestionJob, type IngestionJobDetail, type I
 import { qk } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 
-type StepId = "topic" | "sources" | "focus" | "rules" | "review" | "progress";
+type StepId = "topic" | "sources" | "focus" | "rules" | "review" | "progress" | "refresh";
 type CostMode = "free_only" | "balanced" | "manual_paid";
 type MediaMode = "skip" | "metadata" | "store";
-type DuplicateMode = "skip" | "refresh";
 type SourceGroupId = "social" | "others";
 
 type Draft = {
@@ -42,8 +41,6 @@ type Draft = {
   costMode: CostMode;
   aiReviewEnabled: boolean;
   mediaMode: MediaMode;
-  duplicateMode: DuplicateMode;
-  saveRefinements: boolean;
 };
 
 const steps: Array<{ id: StepId; title: string; icon: LucideIcon }> = [
@@ -52,6 +49,10 @@ const steps: Array<{ id: StepId; title: string; icon: LucideIcon }> = [
   { id: "focus", title: "Focus", icon: Search },
   { id: "rules", title: "Rules", icon: SlidersHorizontal },
   { id: "review", title: "Review", icon: ShieldCheck },
+  { id: "progress", title: "Progress", icon: Rows3 },
+];
+const refreshSteps: Array<{ id: StepId; title: string; icon: LucideIcon }> = [
+  { id: "refresh", title: "Refresh", icon: RefreshCw },
   { id: "progress", title: "Progress", icon: Rows3 },
 ];
 const progressStepIndex = steps.findIndex((step) => step.id === "progress");
@@ -90,11 +91,6 @@ const mediaModeOptions: Array<{ value: MediaMode; label: string; helper: string 
   { value: "store", label: "Store and analyze", helper: "Store images/video from posts and prepare them for analysis." },
 ];
 
-const duplicateModeOptions: Array<{ value: DuplicateMode; label: string; helper: string }> = [
-  { value: "skip", label: "Skip duplicates", helper: "Keep the existing item and skip repeated source URLs." },
-  { value: "refresh", label: "Refresh metrics", helper: "Keep the item and refresh engagement or metadata when possible." },
-];
-
 const initialDraft: Draft = {
   topicId: "",
   runName: "",
@@ -114,8 +110,6 @@ const initialDraft: Draft = {
   costMode: "balanced",
   aiReviewEnabled: true,
   mediaMode: "metadata",
-  duplicateMode: "skip",
-  saveRefinements: false,
 };
 
 const cleanList = (values: string[]): string[] => {
@@ -156,7 +150,6 @@ const dateInputValue = (value: unknown): string => {
 };
 const costModeValue = (value: unknown, fallback: CostMode): CostMode => value === "free_only" || value === "balanced" || value === "manual_paid" ? value : fallback;
 const mediaModeValue = (value: unknown, fallback: MediaMode): MediaMode => value === "skip" || value === "metadata" || value === "store" ? value : fallback;
-const duplicateModeValue = (value: unknown, fallback: DuplicateMode): DuplicateMode => value === "skip" || value === "refresh" ? value : fallback;
 
 function FieldShell({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -338,19 +331,25 @@ const progressPercent = (progress: IngestionProgress | null, job?: IngestionJob 
 
 const formatProgressStage = (stage?: string) => (stage ?? "queued").replace(/_/g, " ");
 
-function LlmStreamPanel({ progress }: { progress: IngestionProgress | null }) {
+function LlmStreamPanel({ progress, detail }: { progress: IngestionProgress | null; detail: IngestionJobDetail | null }) {
   const stream = progress?.llmStream;
-  const streaming = stream?.status === "streaming";
+  const storedError = typeof detail?.job.metadata?.errorMessage === "string" ? detail.job.metadata.errorMessage : null;
+  const errorText = [stream?.error, ...(detail?.errors ?? []).map((error) => error.message), storedError]
+    .map((message) => message?.trim())
+    .filter((message): message is string => Boolean(message));
+  const displayStatus = stream?.status ?? (errorText.length > 0 || detail?.job.status === "failed" ? "failed" : "idle");
+  const streaming = displayStatus === "streaming";
+  const body = [stream?.text?.trim(), ...errorText].filter(Boolean).join("\n\n");
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-sm font-semibold">AI review stream</p>
-          <p className="mt-1 text-xs text-muted-foreground">{stream?.title ?? "Waiting for review output"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{stream?.title ?? (displayStatus === "failed" ? "Collection failed before review output" : "Waiting for review output")}</p>
         </div>
-        <Badge variant={streaming ? "default" : stream?.status === "failed" ? "destructive" : "outline"} className="rounded-md capitalize">
+        <Badge variant={streaming ? "default" : displayStatus === "failed" ? "destructive" : "outline"} className="rounded-md capitalize">
           {streaming && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-          {stream?.status ?? "idle"}
+          {displayStatus}
         </Badge>
       </div>
       {stream && (
@@ -361,7 +360,7 @@ function LlmStreamPanel({ progress }: { progress: IngestionProgress | null }) {
         </div>
       )}
       <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground">
-        {stream?.text?.trim() || stream?.error || "No AI review output yet."}
+        {body || "No AI review output yet."}
       </pre>
     </div>
   );
@@ -373,6 +372,9 @@ export default function IngestionForm() {
   const topicIdFromQuery = searchParams.get("_tid")?.trim() ?? "";
   const jobIdFromQuery = searchParams.get("jobId")?.trim() || searchParams.get("_jid")?.trim() || "";
   const lockedToTopic = Boolean(topicIdFromQuery);
+  const refreshMode = lockedToTopic;
+  const wizardSteps = refreshMode ? refreshSteps : steps;
+  const progressStepIndex = wizardSteps.findIndex((step) => step.id === "progress");
   const [activeIndex, setActiveIndex] = useState(() => jobIdFromQuery ? progressStepIndex : 0);
   const [draft, setDraft] = useState<Draft>(() => ({ ...initialDraft, topicId: topicIdFromQuery }));
   const [hydratedTopicId, setHydratedTopicId] = useState<string | null>(null);
@@ -450,15 +452,13 @@ export default function IngestionForm() {
       maxItemsPerPlatform: String(progressMeta?.maxItemsPerSource ?? metadata.maxItems ?? current.maxItemsPerPlatform),
       costMode: costModeValue(metadata.costMode, current.costMode),
       mediaMode: mediaModeValue(metadata.mediaMode, current.mediaMode),
-      duplicateMode: duplicateModeValue(metadata.duplicateMode, current.duplicateMode),
-      saveRefinements: typeof metadata.saveRefinements === "boolean" ? metadata.saveRefinements : current.saveRefinements,
     }));
     setHydratedJobId(jobIdFromQuery);
   }, [connectors.data, hydratedJobId, jobDetails.data, jobIdFromQuery]);
 
-  const activeStep = steps[activeIndex];
+  const activeStep = wizardSteps[activeIndex];
   const ActiveIcon = activeStep.icon;
-  const progress = ((activeIndex + 1) / steps.length) * 100;
+  const progress = ((activeIndex + 1) / wizardSteps.length) * 100;
   const maxItems = Math.max(1, Number(draft.maxItemsPerPlatform) || 50);
   const canFinish = Boolean(draft.topicId) && draft.platforms.length > 0 && maxItems > 0;
   const returnPath = lockedToTopic ? `/topics/${topicIdFromQuery}` : "/ingestion";
@@ -466,7 +466,7 @@ export default function IngestionForm() {
   const allSourcesSelected = allSourceValues.every((source) => draft.platforms.includes(source));
 
   const updateDraft = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
-  const next = () => setActiveIndex((current) => Math.min(steps.length - 1, current + 1));
+  const next = () => setActiveIndex((current) => Math.min(wizardSteps.length - 1, current + 1));
   const previous = () => setActiveIndex((current) => Math.max(0, current - 1));
   const days = draft.datePreset === "24h" ? 1 : draft.datePreset === "7d" ? 7 : 30;
 
@@ -496,8 +496,6 @@ export default function IngestionForm() {
             regions: draft.regions,
             mediaMode: draft.mediaMode,
             costMode: draft.costMode,
-            duplicateMode: draft.duplicateMode,
-            saveRefinements: draft.saveRefinements,
           },
         });
         jobs.push(job);
@@ -535,15 +533,15 @@ export default function IngestionForm() {
                 <Badge variant="outline" className="rounded-md">Post collection</Badge>
               </div>
               <div>
-                <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Collect posts</h1>
-                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Prepare a focused post collection run across multiple sources, with query refinements, safety settings, and review rules.</p>
+                <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{refreshMode ? "Refresh data" : "Collect posts"}</h1>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{refreshMode ? "Pull a fresh batch of posts and signals for this topic using its existing keywords, regions, and languages." : "Prepare a focused post collection run across multiple sources, with query refinements, safety settings, and review rules."}</p>
               </div>
             </div>
             <div className="flex flex-col gap-3 sm:min-w-56">
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Progress</span>
-                  <span>{activeIndex + 1}/{steps.length}</span>
+                  <span>{activeIndex + 1}/{wizardSteps.length}</span>
                 </div>
                 <Progress value={progress} />
               </div>
@@ -555,16 +553,18 @@ export default function IngestionForm() {
           <Card className="h-fit xl:sticky xl:top-6">
             <CardContent className="p-3">
               <div className="space-y-1">
-                {steps.map((step, index) => {
+                {wizardSteps.map((step, index) => {
                   const Icon = step.icon;
                   const active = index === activeIndex;
                   const complete = index < activeIndex;
+                  const progressGated = step.id === "progress" && startedJobIds.length === 0 && !startIngestion.isPending;
                   return (
                     <button
                       key={step.id}
                       type="button"
-                      onClick={() => setActiveIndex(index)}
-                      className={cn("flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors", active ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                      disabled={progressGated}
+                      onClick={() => { if (!progressGated) setActiveIndex(index); }}
+                      className={cn("flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors", active ? "bg-primary text-primary-foreground" : "hover:bg-muted", progressGated && "cursor-not-allowed opacity-50 hover:bg-transparent")}
                     >
                       <span className={cn("flex h-8 w-8 items-center justify-center rounded-md border", active ? "border-primary-foreground/30 bg-primary-foreground/10" : "border-border bg-background")}>
                         {complete ? <Check className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
@@ -675,24 +675,19 @@ export default function IngestionForm() {
                     </div>
                   )}
                   <FieldShell label="Cost mode"><ChoiceGrid value={draft.costMode} options={costModeOptions} onChange={(costMode) => updateDraft({ costMode })} disabled={ingestionStarted} /></FieldShell>
-                  <FieldShell label="Media handling"><ChoiceGrid value={draft.mediaMode} options={mediaModeOptions} onChange={(mediaMode) => updateDraft({ mediaMode })} disabled={ingestionStarted} /></FieldShell>
-                  <FieldShell label="Duplicate handling"><ChoiceGrid value={draft.duplicateMode} options={duplicateModeOptions} onChange={(duplicateMode) => updateDraft({ duplicateMode })} disabled={ingestionStarted} /></FieldShell>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-card p-4">
-                      <span>
-                        <span className="block text-sm font-medium">AI pre-save review</span>
-                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">Review relevance and sentiment before saving posts.</span>
-                      </span>
-                      <Switch checked={draft.aiReviewEnabled} disabled={ingestionStarted} onCheckedChange={(aiReviewEnabled) => updateDraft({ aiReviewEnabled })} />
-                    </label>
-                    <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-card p-4">
-                      <span>
-                        <span className="block text-sm font-medium">Save refinements to topic</span>
-                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">Turn run-specific keywords into topic defaults later.</span>
-                      </span>
-                      <Switch checked={draft.saveRefinements} disabled={ingestionStarted} onCheckedChange={(saveRefinements) => updateDraft({ saveRefinements })} />
-                    </label>
-                  </div>
+                  <details className="rounded-lg border border-border bg-card">
+                    <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium">Advanced options</summary>
+                    <div className="space-y-5 border-t border-border p-4">
+                      <FieldShell label="Media handling"><ChoiceGrid value={draft.mediaMode} options={mediaModeOptions} onChange={(mediaMode) => updateDraft({ mediaMode })} disabled={ingestionStarted} /></FieldShell>
+                      <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-card p-4">
+                        <span>
+                          <span className="block text-sm font-medium">AI pre-save review</span>
+                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">Review relevance and sentiment before saving posts.</span>
+                        </span>
+                        <Switch checked={draft.aiReviewEnabled} disabled={ingestionStarted} onCheckedChange={(aiReviewEnabled) => updateDraft({ aiReviewEnabled })} />
+                      </label>
+                    </div>
+                  </details>
                 </div>
               )}
 
@@ -717,6 +712,54 @@ export default function IngestionForm() {
                     <SummaryList title="Excluded noise" items={draft.excludeKeywords} />
                     <SummaryList title="Regions" items={draft.regions} />
                   </div>
+                </div>
+              )}
+
+              {activeStep.id === "refresh" && (
+                <div className="space-y-6">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4">
+                    <p className="text-xs text-muted-foreground">Topic</p>
+                    <p className="mt-1 text-lg font-semibold">{topicTitle(selectedTopic)}</p>
+                    <p className="mt-2 text-sm text-muted-foreground line-clamp-3">{selectedTopic?.description ?? "No description"}</p>
+                    <p className="mt-3 text-xs text-muted-foreground">Refresh uses this topic's existing keywords, regions, and languages. Edit the topic to change them.</p>
+                  </div>
+                  <FieldShell label="Sources to refresh">
+                    <SourceGrid value={draft.platforms} onChange={(platforms) => updateDraft({ platforms })} connectors={connectors.data ?? []} disabled={ingestionStarted} />
+                  </FieldShell>
+                  <div className="grid gap-5 lg:grid-cols-3">
+                    <FieldShell label="Time window">
+                      <Select value={draft.datePreset} disabled={ingestionStarted} onValueChange={(datePreset) => updateDraft({ datePreset: datePreset as Draft["datePreset"] })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="24h">Last 24 hours</SelectItem>
+                          <SelectItem value="7d">Last 7 days</SelectItem>
+                          <SelectItem value="30d">Last 30 days</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FieldShell>
+                    <FieldShell label="Max items per source">
+                      <Input type="number" min={1} max={250} value={draft.maxItemsPerPlatform} disabled={ingestionStarted} onChange={(event) => updateDraft({ maxItemsPerPlatform: event.target.value })} />
+                    </FieldShell>
+                    <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
+                      <p className="text-xs text-muted-foreground">Estimated maximum</p>
+                      <p className="mt-1 text-xl font-semibold tabular-nums">{maxItems * draft.platforms.length}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{draft.platforms.length} sources x {maxItems} items</p>
+                    </div>
+                  </div>
+                  <details className="rounded-lg border border-border bg-card">
+                    <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium">Advanced options</summary>
+                    <div className="space-y-5 border-t border-border p-4">
+                      <FieldShell label="Cost mode"><ChoiceGrid value={draft.costMode} options={costModeOptions} onChange={(costMode) => updateDraft({ costMode })} disabled={ingestionStarted} /></FieldShell>
+                      <FieldShell label="Media handling"><ChoiceGrid value={draft.mediaMode} options={mediaModeOptions} onChange={(mediaMode) => updateDraft({ mediaMode })} disabled={ingestionStarted} /></FieldShell>
+                      <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-card p-4">
+                        <span>
+                          <span className="block text-sm font-medium">AI pre-save review</span>
+                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">Review relevance and sentiment before saving posts.</span>
+                        </span>
+                        <Switch checked={draft.aiReviewEnabled} disabled={ingestionStarted} onCheckedChange={(aiReviewEnabled) => updateDraft({ aiReviewEnabled })} />
+                      </label>
+                    </div>
+                  </details>
                 </div>
               )}
 
@@ -857,13 +900,13 @@ export default function IngestionForm() {
                 <Button type="button" variant="outline" onClick={previous} disabled={activeIndex === 0}><ArrowLeft className="h-4 w-4" /> Back</Button>
                 <div className="flex flex-wrap gap-2">
                   {activeStep.id !== "progress" && <Button type="button" variant="outline" onClick={() => navigate(returnPath)}>Cancel</Button>}
-                  {activeStep.id === "review" ? (
+                  {activeStep.id === "review" || activeStep.id === "refresh" ? (
                     ingestionStarted ? (
                       <Button type="button" onClick={() => setActiveIndex(progressStepIndex)}><Rows3 className="h-4 w-4" /> View progress</Button>
                     ) : (
                       <Button type="button" onClick={finish} disabled={!canFinish || startIngestion.isPending}>
                         {startIngestion.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                        {startIngestion.isPending ? "Starting..." : "Collect posts"}
+                        {startIngestion.isPending ? "Starting..." : refreshMode ? "Refresh data" : "Collect posts"}
                       </Button>
                     )
                   ) : activeStep.id === "progress" ? (
@@ -872,7 +915,7 @@ export default function IngestionForm() {
                     ) : (
                       <Button type="button" disabled><ExternalLink className="h-4 w-4" /> Open Topic Details</Button>
                     )
-                  ) : activeIndex < steps.length - 1 ? (
+                  ) : activeIndex < wizardSteps.length - 1 ? (
                     <Button type="button" onClick={next}>Continue <ArrowRight className="h-4 w-4" /></Button>
                   ) : (
                     <Button type="button" onClick={() => setActiveIndex(progressStepIndex)}><Save className="h-4 w-4" /> Progress</Button>
@@ -911,7 +954,6 @@ export default function IngestionForm() {
                 <p className="flex items-center gap-2"><CalendarClock className="h-3.5 w-3.5" /> Range: {draft.datePreset}</p>
                 <p className="flex items-center gap-2"><ShieldCheck className="h-3.5 w-3.5" /> AI review: {draft.aiReviewEnabled ? "on" : "off"}</p>
                 <p className="flex items-center gap-2"><ImageIcon className="h-3.5 w-3.5" /> Media: {draft.mediaMode}</p>
-                <p className="flex items-center gap-2"><Database className="h-3.5 w-3.5" /> Duplicates: {draft.duplicateMode}</p>
               </div>
             </CardContent>
           </Card>
@@ -928,7 +970,7 @@ export default function IngestionForm() {
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 {selectedStreamDetail ? (
-                  <LlmStreamPanel progress={selectedStreamProgress} />
+                  <LlmStreamPanel progress={selectedStreamProgress} detail={selectedStreamDetail} />
                 ) : (
                   <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading selected stream...

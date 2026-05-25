@@ -2,7 +2,52 @@
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleXMentions } from './ensembledata.js';
+import { fetchSocialWebSearchMentions, paidSocialApiAllowed, shouldUseSocialWebSearchFirst } from './socialWebSearch.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const textList = (ctx: IngestionContext, keys: string[]): string[] => {
+  const cfg = asRecord(ctx.connectorConfig);
+  for (const key of keys) {
+    const value = cfg[key];
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeTerm = (value: string): string => value.trim().replace(/^[@#]+/, '').trim();
+
+const searchTerms = (ctx: IngestionContext): string[] => [...new Set([
+  ...ctx.keywords,
+  ...textList(ctx, ['includeKeywords']),
+  ...textList(ctx, ['exactPhrases']),
+  ...textList(ctx, ['hashtags']).map(normalizeTerm),
+].map(normalizeTerm).filter(Boolean))];
+
+const buildRecentSearchQuery = (ctx: IngestionContext): string => {
+  const include = searchTerms(ctx).slice(0, 6).map((term) => term.includes(' ') ? `"${term}"` : term);
+  const exclude = [...ctx.excludeKeywords, ...textList(ctx, ['excludeKeywords'])]
+    .map(normalizeTerm)
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((term) => `-${term}`);
+  return [include.join(' OR '), exclude.join(' ')].filter(Boolean).join(' ').trim();
+};
+
+const applyRecentSearchWindow = (url: URL, ctx: IngestionContext): void => {
+  if (ctx.dateFrom) {
+    const requestedStart = Date.parse(ctx.dateFrom);
+    const recentFloor = Date.now() - 6.9 * 24 * 3600_000;
+    if (Number.isFinite(requestedStart)) url.searchParams.set('start_time', new Date(Math.max(requestedStart, recentFloor)).toISOString());
+  }
+  if (ctx.dateTo) {
+    const requestedEnd = Date.parse(ctx.dateTo);
+    if (Number.isFinite(requestedEnd) && requestedEnd < Date.now()) url.searchParams.set('end_time', new Date(requestedEnd).toISOString());
+  }
+};
 
 export const xConnector: SourceConnector = {
   platform: 'x',
@@ -22,8 +67,21 @@ export const xConnector: SourceConnector = {
   },
 
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {
-    if (!config.x.bearerToken) return ensembleDataConfigured() ? fetchEnsembleXMentions(ctx) : [];
-    const query = ctx.keywords.slice(0, 3).map((k) => `"${k}"`).join(' OR ');
+    if (shouldUseSocialWebSearchFirst(ctx)) {
+      const drafts = await fetchSocialWebSearchMentions(ctx, 'x');
+      if (drafts.length > 0 || !paidSocialApiAllowed(ctx)) return drafts;
+    }
+    if (ensembleDataConfigured() && paidSocialApiAllowed(ctx)) {
+      try {
+        const drafts = await fetchEnsembleXMentions(ctx);
+        if (drafts.length > 0 || !config.x.bearerToken) return drafts;
+      } catch (error) {
+        if (!config.x.bearerToken) throw error;
+      }
+    }
+    if (!paidSocialApiAllowed(ctx)) return [];
+    if (!config.x.bearerToken) throw new Error('Source is not configured.');
+    const query = buildRecentSearchQuery(ctx);
     if (!query) return [];
 
     const url = new URL('https://api.twitter.com/2/tweets/search/recent');
@@ -33,10 +91,11 @@ export const xConnector: SourceConnector = {
     url.searchParams.set('expansions', 'author_id,attachments.media_keys');
     url.searchParams.set('user.fields', 'username,name,verified,public_metrics');
     url.searchParams.set('media.fields', 'type,url,preview_image_url,alt_text');
+    applyRecentSearchWindow(url, ctx);
 
-    const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${config.x.bearerToken}` } });
-    if (!r.ok) throw new Error(`X HTTP ${r.status}`);
-    const data: any = await r.json();
+    const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${config.x.bearerToken}` } });
+    if (!response.ok) throw new Error(`X source request failed (${response.status}).`);
+    const data: any = await response.json();
     const usersById = new Map<string, any>();
     for (const u of data.includes?.users ?? []) usersById.set(u.id, u);
     const mediaByKey = new Map<string, any>();

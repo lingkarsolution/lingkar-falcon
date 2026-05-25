@@ -39,6 +39,12 @@ export type ChatResponse = {
 type ModelKind = 'chat' | 'completion';
 const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
+const JSON_PROVIDER_OPTIONS = {
+  openrouter: {
+    reasoning: { effort: 'none', exclude: true },
+  },
+} as const;
+
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const openRouterApiKey = () => config.llm.apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -95,9 +101,11 @@ export const chatCompletion = async (req: ChatRequest): Promise<ChatResponse> =>
       const result = streamText({
         model: getLlmModel(),
         messages: finalMessages,
+        allowSystemInMessages: true,
         temperature: req.temperature ?? 0.2,
         maxOutputTokens: req.maxTokens,
         abortSignal: controller.signal,
+        providerOptions: req.jsonMode ? JSON_PROVIDER_OPTIONS : undefined,
       });
 
       for await (const part of result.fullStream) {
@@ -133,9 +141,11 @@ export const chatCompletion = async (req: ChatRequest): Promise<ChatResponse> =>
     const result = await generateText({
       model: getLlmModel(),
       messages: finalMessages,
+      allowSystemInMessages: true,
       temperature: req.temperature ?? 0.2,
       maxOutputTokens: req.maxTokens,
       abortSignal: controller.signal,
+      providerOptions: req.jsonMode ? JSON_PROVIDER_OPTIONS : undefined,
     });
 
     const promptTokens = result.usage.inputTokens ?? 0;

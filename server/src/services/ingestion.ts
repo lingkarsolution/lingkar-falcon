@@ -108,8 +108,179 @@ const updateLlmStream = (jobId: string, connector: Connector, maxItemsPerSource:
   });
 };
 
+const failedLlmStream = (job: IngestionJob | undefined, message: string): IngestionJobProgress['llmStream'] => {
+  const progress = job?.metadata?.ingestionProgress as IngestionJobProgress | undefined;
+  const existing = progress?.llmStream;
+  return {
+    status: 'failed',
+    phase: existing?.phase ?? 'pre_ingestion_review',
+    title: existing?.title ?? 'Collection failed before AI review',
+    batch: existing?.batch ?? 0,
+    totalBatches: existing?.totalBatches ?? 0,
+    candidates: existing?.candidates ?? 0,
+    text: existing?.text ?? '',
+    error: message,
+    startedAt: existing?.startedAt ?? now(),
+    updatedAt: now(),
+  };
+};
+
+const updateFailedProgress = (jobId: string, connector: Connector, maxItemsPerSource: number, retrievedLimit: number, message: string) => {
+  const latestJob = store.get('ingestionJobs', jobId) as IngestionJob | undefined;
+  updateProgress(jobId, connector, maxItemsPerSource, retrievedLimit, { stage: 'failed', llmStream: failedLlmStream(latestJob, message) });
+};
+
 const draftKey = (draft: CanonicalMentionDraft): string =>
   draft.sourceUrlHash ?? draft.sourceUrl ?? `${draft.platform}:${draft.sourceId ?? ''}:${(draft.text ?? draft.title ?? '').slice(0, 160)}`;
+
+const cleanTextValue = (value?: string | null): string | null => {
+  const text = value?.trim();
+  return text ? text : null;
+};
+
+const isMissingTextValue = (value?: string | null): boolean => {
+  const text = cleanTextValue(value);
+  return !text || /^(unknown|unknown author|n\/a)$/i.test(text);
+};
+
+const finiteMetric = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const firstFiniteMetric = (metrics: Record<string, unknown>, keys: string[]): number | null => {
+  for (const key of keys) {
+    const value = finiteMetric(metrics[key]);
+    if (value !== null) return value;
+  }
+  return null;
+};
+
+const mergeAuthor = (current: Mention['author'], incoming: CanonicalMentionDraft['author']): { author: Mention['author']; changed: boolean } => {
+  if (!incoming) return { author: current ?? null, changed: false };
+  const next = { ...(current ?? {}) } as NonNullable<Mention['author']>;
+  let changed = false;
+  const applyText = (key: 'id' | 'username' | 'displayName' | 'profileUrl') => {
+    const value = cleanTextValue(incoming[key]);
+    if (value && isMissingTextValue(next[key])) {
+      next[key] = value;
+      changed = true;
+    }
+  };
+  applyText('id');
+  applyText('username');
+  applyText('displayName');
+  applyText('profileUrl');
+  if (typeof incoming.followersCount === 'number' && Number.isFinite(incoming.followersCount)) {
+    if (typeof next.followersCount !== 'number' || next.followersCount <= 0 || incoming.followersCount > next.followersCount) {
+      next.followersCount = incoming.followersCount;
+      changed = true;
+    }
+  }
+  if (incoming.verified === true && next.verified !== true) {
+    next.verified = true;
+    changed = true;
+  } else if (typeof incoming.verified === 'boolean' && next.verified == null) {
+    next.verified = incoming.verified;
+    changed = true;
+  }
+  return { author: Object.keys(next).length > 0 ? next : null, changed };
+};
+
+const mergeMetrics = (current: Mention['metrics'] | undefined, incoming: CanonicalMentionDraft['metrics'] | undefined): { metrics: Mention['metrics']; changed: boolean } => {
+  const next = { ...(current ?? {}) } as Mention['metrics'];
+  if (!incoming) {
+    const engagementTotal = computeEngagementTotal(next);
+    return { metrics: { ...next, engagementTotal }, changed: next.engagementTotal !== engagementTotal };
+  }
+  const incomingMetrics = incoming as Record<string, unknown>;
+  let changed = false;
+  const metricSources: Array<[keyof Mention['metrics'], string[]]> = [
+    ['views', ['views', 'viewCount']],
+    ['likes', ['likes', 'likeCount']],
+    ['comments', ['comments', 'commentCount']],
+    ['shares', ['shares', 'shareCount']],
+    ['reposts', ['reposts']],
+    ['quotes', ['quotes']],
+    ['saves', ['saves']],
+    ['reachEstimate', ['reachEstimate']],
+  ];
+  for (const [key, aliases] of metricSources) {
+    const incomingValue = firstFiniteMetric(incomingMetrics, aliases);
+    if (incomingValue === null) continue;
+    const currentValue = finiteMetric(next[key]);
+    if (currentValue === null || currentValue <= 0 || incomingValue > currentValue) {
+      next[key] = incomingValue;
+      changed = true;
+    }
+  }
+  const engagementTotal = computeEngagementTotal(next);
+  if (next.engagementTotal !== engagementTotal) {
+    next.engagementTotal = engagementTotal;
+    changed = true;
+  }
+  return { metrics: next, changed };
+};
+
+const mergeMedia = (current: MentionMediaAsset[] | undefined, incoming: MentionMediaAsset[] | undefined, collectedAt: string, status: MentionMediaAsset['status']): { media: MentionMediaAsset[] | undefined; added: number } => {
+  const existing = [...(current ?? [])];
+  const seen = new Set(existing.map((asset) => asset.sourceUrl).filter(Boolean));
+  const additions = normalizeMediaAssets(incoming ?? [], collectedAt, status).filter((asset) => !seen.has(asset.sourceUrl));
+  if (additions.length === 0) return { media: current, added: 0 };
+  return { media: [...existing, ...additions].slice(0, 6), added: additions.length };
+};
+
+const refreshExistingMentionFromDraft = (mentionId: string, item: PreIngestionReviewedItem): { updated: boolean; mediaAdded: number } => {
+  const existing = store.get('mentions', mentionId) as Mention | undefined;
+  if (!existing) return { updated: false, mediaAdded: 0 };
+  const draft = item.draft;
+  const collectedAt = now();
+  const author = mergeAuthor(existing.author ?? null, draft.author);
+  const metrics = mergeMetrics(existing.metrics, draft.metrics);
+  const media = mergeMedia(existing.media, draft.media, collectedAt, item.kept ? 'queued' : 'skipped');
+  let updated: Mention = existing;
+  let changed = false;
+  const review = draft.preIngestionReview;
+  if (author.changed) {
+    updated = { ...updated, author: author.author };
+    changed = true;
+  }
+  if (metrics.changed) {
+    updated = { ...updated, metrics: metrics.metrics };
+    changed = true;
+  }
+  if (media.added > 0) {
+    updated = { ...updated, media: media.media };
+    changed = true;
+  }
+  if (!updated.title && draft.title) {
+    updated = { ...updated, title: draft.title };
+    changed = true;
+  }
+  if (!updated.publishedAt && draft.publishedAt) {
+    updated = { ...updated, publishedAt: draft.publishedAt };
+    changed = true;
+  }
+  if (!updated.sourceId && draft.sourceId) {
+    updated = { ...updated, sourceId: draft.sourceId };
+    changed = true;
+  }
+  if (review) {
+    const nextQuality = {
+      ...updated.quality,
+      isIrrelevant: item.kept ? false : updated.quality.isIrrelevant,
+      relevanceScore: Math.max(updated.quality.relevanceScore ?? 0, review.relevanceScore),
+      reviewSource: review.source,
+      reviewReason: review.reason ?? updated.quality.reviewReason ?? null,
+      rejectionReason: item.kept ? null : updated.quality.rejectionReason ?? skippedByReviewReason(review),
+    };
+    if (JSON.stringify(nextQuality) !== JSON.stringify(updated.quality)) {
+      updated = { ...updated, quality: nextQuality };
+      changed = true;
+    }
+  }
+  if (!changed) return { updated: false, mediaAdded: 0 };
+  store.put('mentions', mentionId, { ...updated, updatedAt: collectedAt });
+  return { updated: true, mediaAdded: media.added };
+};
 
 export const enqueueIngestion = async (params: {
   tenantId: string; topicId: string; connectorId: string;
@@ -127,7 +298,7 @@ export const enqueueIngestion = async (params: {
     connectorId: params.connectorId, jobType: params.jobType,
     status: 'queued', requestedBy: params.requestedBy ?? null,
     startedAt: null, finishedAt: null,
-    fetchedCount: 0, insertedCount: 0, skippedCount: 0, errorCount: 0,
+    fetchedCount: 0, insertedCount: 0, acceptedCount: 0, rejectedCount: 0, skippedCount: 0, errorCount: 0,
     metadata: {
       ...(params.metadata ?? {}),
       maxItems: params.maxItems ?? 50,
@@ -146,32 +317,46 @@ export const enqueueIngestion = async (params: {
 export const runIngestionJob = async (jobId: string): Promise<void> => {
   const job = store.get('ingestionJobs', jobId);
   if (!job) return;
+  // Re-check status: another caller may have cancelled this queued job before we picked it up.
+  if (job.status === 'cancelled') return;
   const topic = store.get('topics', job.topicId);
   const connector = store.get('connectors', job.connectorId) as Connector | undefined;
   if (!topic || !connector) {
-    finalize(jobId, 'failed', { errorMessage: 'Topic or connector not found' });
+    finalize(jobId, 'failed', { errorMessage: 'Topic or connector not found', errorCount: 1 });
     await store.flush();
     return;
   }
   if (!connector.enabled || connector.status === 'disabled' || connector.status === 'budget_exceeded') {
-    finalize(jobId, 'failed', { errorMessage: `Connector ${connector.platform} is ${connector.status}` });
+    const errorMessage = `Connector ${connector.platform} is ${connector.status}`;
+    const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
+    updateFailedProgress(jobId, connector, maxItems, isEnsemblePaginatedConnector(connector) ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems, errorMessage);
+    finalize(jobId, 'failed', { errorMessage, errorCount: 1 });
     await store.flush();
     return;
   }
   const impl = getConnector(connector.platform);
   if (!impl) {
-    finalize(jobId, 'failed', { errorMessage: `No connector implementation for ${connector.platform}` });
+    const errorMessage = `No connector implementation for ${connector.platform}`;
+    const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
+    updateFailedProgress(jobId, connector, maxItems, isEnsemblePaginatedConnector(connector) ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems, errorMessage);
+    finalize(jobId, 'failed', { errorMessage, errorCount: 1 });
     await store.flush();
     return;
   }
 
   store.put('ingestionJobs', jobId, { ...job, status: 'running', startedAt: now() });
   await store.flush();
+  const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
+  const ensemblePaginated = isEnsemblePaginatedConnector(connector);
+  const retrievalLimit = ensemblePaginated ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems;
+  let retrievedTotal = 0;
+  let acceptedTotal = 0;
+  let rejectedTotal = 0;
+  let insertedTotal = 0;
+  let skippedTotal = 0;
+  let errorTotal = 0;
   try {
-    const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
     const days = Number((job.metadata as any)?.days ?? (connector.config as any)?.historicalDays ?? (connector.config as any)?.timespanDays ?? 30);
-    const ensemblePaginated = isEnsemblePaginatedConnector(connector);
-    const retrievalLimit = ensemblePaginated ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems;
     const pageSize = ensemblePaginated ? Math.min(maxItems, retrievalLimit) : maxItems;
     const dateFrom = (job.metadata as any)?.dateFrom
       ?? (Number.isFinite(days) && days > 0 ? new Date(Date.now() - Math.min(90, days) * 24 * 3600_000).toISOString() : undefined);
@@ -181,12 +366,6 @@ export const runIngestionJob = async (jobId: string): Promise<void> => {
     const geoResults: Array<Awaited<ReturnType<typeof enrichMentionsGeo>>> = [];
     const sentimentResults: Array<Awaited<ReturnType<typeof analyzeMentionsSentimentBulk>>> = [];
     const seenRunDrafts = new Set<string>();
-    let retrievedTotal = 0;
-    let acceptedTotal = 0;
-    let rejectedTotal = 0;
-    let insertedTotal = 0;
-    let skippedTotal = 0;
-    let errorTotal = 0;
     const batches: IngestionJobProgress['batches'] = [];
 
     updateProgress(jobId, connector, maxItems, retrievalLimit, { stage: 'queued', maxItemsPerSource: maxItems, retrievedLimit: retrievalLimit });
@@ -293,6 +472,8 @@ export const runIngestionJob = async (jobId: string): Promise<void> => {
     finalize(jobId, 'completed', {
       fetchedCount: retrievedTotal,
       insertedCount: insertedTotal,
+      acceptedCount: acceptedTotal,
+      rejectedCount: rejectedTotal,
       skippedCount: skippedTotal,
       errorCount: errorTotal,
       metadata: { itemOutcomes, ensemblePagination: { enabled: ensemblePaginated, retrievalLimit, maxItemsPerSource: maxItems, accepted: acceptedTotal, retrieved: retrievedTotal }, preIngestionReview: preReviewSummary, ...(geoResults.length ? { geo: geoResults } : {}), ...(sentimentResults.length ? { sentiment: sentimentResults } : {}) },
@@ -305,8 +486,16 @@ export const runIngestionJob = async (jobId: string): Promise<void> => {
       id: errId, tenantId: job.tenantId, ingestionJobId: jobId,
       errorCode: null, message: err.message, rawContext: null, createdAt: now(),
     });
-    updateProgress(jobId, connector, Number((job.metadata as any)?.maxItems ?? 50), isEnsemblePaginatedConnector(connector) ? ENSEMBLE_RETRIEVAL_LIMIT : Number((job.metadata as any)?.maxItems ?? 50), { stage: 'failed' });
-    finalize(jobId, 'failed', { errorCount: 1, errorMessage: err.message });
+    updateFailedProgress(jobId, connector, maxItems, retrievalLimit, err.message);
+    finalize(jobId, 'failed', {
+      fetchedCount: retrievedTotal,
+      insertedCount: insertedTotal,
+      acceptedCount: acceptedTotal,
+      rejectedCount: rejectedTotal,
+      skippedCount: skippedTotal,
+      errorCount: errorTotal + 1,
+      errorMessage: err.message,
+    });
     await store.flush();
   }
 };
@@ -321,7 +510,7 @@ export const recoverInterruptedIngestionJobs = (): number => {
     const connector = store.get('connectors', job.connectorId) as Connector | undefined;
     if (connector) {
       const maxItems = Number((job.metadata as any)?.maxItems ?? 50);
-      updateProgress(job.id, connector, maxItems, isEnsemblePaginatedConnector(connector) ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems, { stage: 'failed' });
+      updateFailedProgress(job.id, connector, maxItems, isEnsemblePaginatedConnector(connector) ? ENSEMBLE_RETRIEVAL_LIMIT : maxItems, message);
     }
     const errId = newId('jerr');
     store.put('ingestionJobErrors', errId, {
@@ -351,13 +540,21 @@ const ingestReviewedItems = (topic: Topic, items: PreIngestionReviewedItem[]): {
     const draft = item.draft;
     const kept = item.kept;
     if (draft.sourceUrlHash && existingHashes.has(draft.sourceUrlHash)) {
+      const duplicateOfMentionId = existingHashes.get(draft.sourceUrlHash) ?? null;
+      const refresh = duplicateOfMentionId ? refreshExistingMentionFromDraft(duplicateOfMentionId, item) : { updated: false, mediaAdded: 0 };
+      if (duplicateOfMentionId && kept && refresh.mediaAdded > 0) {
+        mediaMentionIds.push(duplicateOfMentionId);
+        mediaAssetCount += refresh.mediaAdded;
+      }
       skipped++;
       outcomes.push({
         draft,
         status: 'skipped',
         reasonCode: 'duplicate',
-        reason: 'Skipped because this source was already stored for this topic.',
-        duplicateOfMentionId: existingHashes.get(draft.sourceUrlHash) ?? null,
+        reason: refresh.updated
+          ? 'Skipped because this source was already stored for this topic. Refreshed the existing mention with newer author, metric, or media data.'
+          : 'Skipped because this source was already stored for this topic.',
+        duplicateOfMentionId,
       });
       continue;
     }
@@ -531,7 +728,7 @@ const recordUsage = (connector: Connector, jobId: string, requestCount: number) 
 const finalize = (
   jobId: string,
   status: IngestionJob['status'],
-  patch: Partial<Pick<IngestionJob, 'fetchedCount' | 'insertedCount' | 'skippedCount' | 'errorCount'>> & { errorMessage?: string; metadata?: Record<string, unknown> },
+  patch: Partial<Pick<IngestionJob, 'fetchedCount' | 'insertedCount' | 'acceptedCount' | 'rejectedCount' | 'skippedCount' | 'errorCount'>> & { errorMessage?: string; metadata?: Record<string, unknown> },
 ) => {
   const job = store.get('ingestionJobs', jobId);
   if (!job) return;
@@ -539,6 +736,8 @@ const finalize = (
     ...job, status, finishedAt: now(),
     fetchedCount: patch.fetchedCount ?? job.fetchedCount,
     insertedCount: patch.insertedCount ?? job.insertedCount,
+    acceptedCount: patch.acceptedCount ?? job.acceptedCount ?? 0,
+    rejectedCount: patch.rejectedCount ?? job.rejectedCount ?? 0,
     skippedCount: patch.skippedCount ?? job.skippedCount,
     errorCount: patch.errorCount ?? job.errorCount,
     metadata: { ...job.metadata, ...(patch.metadata ?? {}), ...(patch.errorMessage ? { errorMessage: patch.errorMessage } : {}) },

@@ -5,7 +5,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { errorResponse, ok } from '../../lib/api.js';
 import { runCommander, runCommanderStreaming, type CommanderStreamEvent } from '../../commander/runtime.js';
 import { TOOLS } from '../../commander/tools.js';
-import type { Conversation, ConversationTurn } from '../../types.js';
+import type { Conversation, ConversationTurn, ToolInvocation } from '../../types.js';
 
 const publicToolLabels: Record<string, { name: string; description: string }> = {
   search_mentions: { name: 'Saved posts search', description: 'Search collected posts for a topic.' },
@@ -56,11 +56,26 @@ export const registerCommanderRoutes = (app: FastifyInstance) => {
   app.get('/conversations/:id/turns', { preHandler: requireAuth() }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const conv = store.get('conversations', id) as Conversation | undefined;
-    if (!conv || conv.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Conversation not found');
+    if (!conv || conv.tenantId !== req.tenant!.id || conv.userId !== req.user!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Conversation not found');
     const turns = (store.list('conversationTurns') as ConversationTurn[])
       .filter((t) => t.conversationId === id)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     return ok(reply, { conversation: conv, turns });
+  });
+
+  app.delete('/conversations/:id', { preHandler: requireAuth() }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const conv = store.get('conversations', id) as Conversation | undefined;
+    if (!conv || conv.tenantId !== req.tenant!.id || conv.userId !== req.user!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Conversation not found');
+
+    for (const turn of store.list('conversationTurns') as ConversationTurn[]) {
+      if (turn.conversationId === id) store.delete('conversationTurns', turn.id);
+    }
+    for (const invocation of store.list('toolInvocations') as ToolInvocation[]) {
+      if (invocation.conversationId === id) store.delete('toolInvocations', invocation.id);
+    }
+    store.delete('conversations', id);
+    return ok(reply, { deleted: id });
   });
 
   app.post('/messages', { preHandler: requireAuth() }, async (req, reply) => {

@@ -24,6 +24,23 @@ export const redactInfrastructureText = (message?: string | null): string | null
   if (lower === 'ok' || lower.includes('reachable') || lower.includes('web search via')) return 'Source reachable.';
   if (lower.includes('timed out')) return 'Source request timed out.';
   if (lower.includes('not configured') || lower.includes('token is empty') || /set\s+[a-z0-9_]+/i.test(trimmed)) return 'Source is not configured.';
+  if (
+    lower.startsWith('source validation failed')
+    || lower.includes('source token was not found')
+    || lower.includes('source account email is not verified')
+    || lower.includes('source subscription is expired')
+    || lower.includes('source daily units are exhausted')
+    || lower.includes('source reports the user is private')
+    || lower.includes('source reports the user is restricted')
+    || lower.includes('source reports the profile is not available')
+    || lower.includes('source could not find the configured user')
+  ) return trimmed;
+  if (/^(facebook|instagram|x) source request failed \(\d+\)/i.test(trimmed)) {
+    return trimmed
+      .replace(/access_token=[^&\s]+/gi, 'access_token=[redacted]')
+      .replace(/access token [^\s.]+/gi, 'access token [redacted]')
+      .replace(/[A-Z][A-Z0-9_]{3,}/g, 'configuration');
+  }
   if (lower.includes('returned no items') || lower.includes('no items') || lower.includes('broad keyword') || lower.includes('does not provide') || lower.includes('does not expose') || lower.includes('does not support')) {
     return 'No items were available for this source with the current query. Try a broader query or configured tracked accounts.';
   }
