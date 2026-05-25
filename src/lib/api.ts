@@ -199,6 +199,26 @@ export interface IngestionJob {
 export interface IngestionJobError { id: string; ingestionJobId: string; message: string; createdAt: string; }
 export type IngestionRunItemStatus = 'inserted' | 'skipped';
 export type IngestionRunItemReasonCode = 'stored' | 'duplicate' | 'irrelevant' | 'processing_error';
+export interface IngestionProgressItem {
+  id: string; platform: Platform; sourceType: string; title?: string | null; textPreview?: string | null; sourceUrl?: string | null;
+  status: 'retrieved' | 'reviewing' | 'accepted' | 'rejected' | 'stored' | 'duplicate' | 'error';
+  reason?: string | null; relevanceScore?: number | null; reviewSource?: 'llm' | 'heuristic' | null;
+}
+export interface IngestionProgressBatch {
+  page: number; requested: number; retrieved: number; processed: number; accepted: number; rejected: number; stored: number; duplicates: number;
+  startedAt: string; finishedAt?: string | null;
+}
+export interface IngestionLlmStream {
+  status: 'idle' | 'streaming' | 'completed' | 'failed' | 'fallback';
+  phase: 'pre_ingestion_review' | 'sentiment';
+  title: string; batch: number; totalBatches: number; candidates: number; text: string; error?: string | null; startedAt?: string | null; updatedAt: string;
+}
+export interface IngestionProgress {
+  stage: 'queued' | 'fetching' | 'reviewing' | 'persisting' | 'enriching' | 'completed' | 'failed';
+  platform: Platform; currentPage: number; maxItemsPerSource: number; retrievedLimit: number; retrievedCount: number; processedCount: number;
+  acceptedCount: number; rejectedCount: number; storedCount: number; duplicateCount: number; currentItems: IngestionProgressItem[];
+  batches: IngestionProgressBatch[]; llmStream?: IngestionLlmStream | null; updatedAt: string;
+}
 export interface IngestionRunItem {
   id: string;
   status: IngestionRunItemStatus;

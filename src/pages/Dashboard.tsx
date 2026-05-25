@@ -258,7 +258,7 @@ export default function Dashboard() {
             <Link to="/topics" className="text-xs text-primary hover:underline">View all</Link>
           </CardHeader>
           <CardContent className="space-y-3">
-            {data.recentRisks.length === 0 && <p className="text-sm text-muted-foreground">No risk events yet. Run ingestion + risk detection on a topic.</p>}
+            {data.recentRisks.length === 0 && <p className="text-sm text-muted-foreground">No risk events yet. Run collection + risk detection on a topic.</p>}
             {data.recentRisks.map((r) => (
               <div key={r.id} className="flex items-start justify-between border-b border-border pb-3 last:border-b-0 last:pb-0">
                 <div className="min-w-0">

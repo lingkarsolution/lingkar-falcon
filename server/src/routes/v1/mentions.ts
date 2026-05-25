@@ -9,6 +9,7 @@ export const registerMentionRoutes = (app: FastifyInstance) => {
     const q = req.query as Record<string, string | undefined>;
     let list = (store.list('mentions') as Mention[]).filter((m) => m.tenantId === req.tenant!.id);
     if (q.topicId) list = list.filter((m) => m.topicId === q.topicId);
+    if (q.includeIrrelevant !== 'true') list = list.filter((m) => !m.quality?.isIrrelevant);
     const platform = q.platform ?? q.source;
     if (platform) list = list.filter((m) => m.platform === platform);
     if (q.sourceType) list = list.filter((m) => m.sourceType === q.sourceType);
@@ -29,7 +30,18 @@ export const registerMentionRoutes = (app: FastifyInstance) => {
     const sortDirection = q.sort === 'oldest' ? 1 : -1;
     list = list.sort((a, b) =>
       sortDirection * (new Date(a.publishedAt ?? a.collectedAt).getTime() - new Date(b.publishedAt ?? b.collectedAt).getTime()));
-    const limit = Math.min(200, Number(q.limit ?? 50));
+    const perPlatformLimit = q.perPlatformLimit ? Math.min(50, Math.max(1, Number(q.perPlatformLimit) || 20)) : null;
+    if (perPlatformLimit) {
+      const platformCounts = new Map<string, number>();
+      list = list.filter((m) => {
+        const count = platformCounts.get(m.platform) ?? 0;
+        if (count >= perPlatformLimit) return false;
+        platformCounts.set(m.platform, count + 1);
+        return true;
+      });
+    }
+    const maxLimit = perPlatformLimit ? 500 : 1000;
+    const limit = Math.min(maxLimit, Number(q.limit ?? 50));
     return ok(reply, paginate(list, limit, q.cursor ?? null));
   });
 
@@ -44,6 +56,7 @@ export const registerMentionRoutes = (app: FastifyInstance) => {
     const q = req.query as Record<string, string | undefined>;
     let list = (store.list('mentions') as Mention[]).filter((m) => m.tenantId === req.tenant!.id);
     if (q.topicId) list = list.filter((m) => m.topicId === q.topicId);
+    if (q.includeIrrelevant !== 'true') list = list.filter((m) => !m.quality?.isIrrelevant);
     const header = 'id,publishedAt,platform,sentiment,author,url,text\n';
     const rows = list.slice(0, 5000).map((m) => {
       const cells = [

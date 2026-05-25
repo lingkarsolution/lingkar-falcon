@@ -1,5 +1,4 @@
-// Facebook Pages API. Limited to pages owned/authorized by the app.
-// Set FACEBOOK_ACCESS_TOKEN or FACEBOOK_PAGE_ACCESS_TOKEN + page IDs in topic metadata (`facebookPageIds`).
+// Facebook connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
@@ -7,13 +6,13 @@ import type { SourceConnector, CanonicalMentionDraft, IngestionContext, Connecto
 export const facebookConnector: SourceConnector = {
   platform: 'facebook',
   async testConnection(): Promise<ConnectorHealth> {
-    if (!config.facebook.pageAccessToken) return { ok: false, status: 'not_configured', message: 'Set FACEBOOK_ACCESS_TOKEN or FACEBOOK_PAGE_ACCESS_TOKEN' };
+    if (!config.facebook.pageAccessToken) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
     try {
       const r = await fetch(`https://graph.facebook.com/v20.0/me?access_token=${config.facebook.pageAccessToken}`);
-      if (!r.ok) return { ok: false, status: 'failed', message: `FB HTTP ${r.status}` };
-      return { ok: true, status: 'active', message: 'Facebook reachable (authorized pages only)' };
+      if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+      return { ok: true, status: 'active', message: 'Facebook source reachable.' };
     } catch (e) {
-      return { ok: false, status: 'failed', message: (e as Error).message };
+      return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
     }
   },
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {

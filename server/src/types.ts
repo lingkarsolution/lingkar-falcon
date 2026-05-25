@@ -321,6 +321,63 @@ export type IngestionJob = {
   createdAt: string;
 };
 
+export type IngestionJobProgressItem = {
+  id: string;
+  platform: Platform;
+  sourceType: SourceType;
+  title?: string | null;
+  textPreview?: string | null;
+  sourceUrl?: string | null;
+  status: 'retrieved' | 'reviewing' | 'accepted' | 'rejected' | 'stored' | 'duplicate' | 'error';
+  reason?: string | null;
+  relevanceScore?: number | null;
+  reviewSource?: 'llm' | 'heuristic' | null;
+};
+
+export type IngestionJobProgressBatch = {
+  page: number;
+  requested: number;
+  retrieved: number;
+  processed: number;
+  accepted: number;
+  rejected: number;
+  stored: number;
+  duplicates: number;
+  startedAt: string;
+  finishedAt?: string | null;
+};
+
+export type IngestionJobLlmStream = {
+  status: 'idle' | 'streaming' | 'completed' | 'failed' | 'fallback';
+  phase: 'pre_ingestion_review' | 'sentiment';
+  title: string;
+  batch: number;
+  totalBatches: number;
+  candidates: number;
+  text: string;
+  error?: string | null;
+  startedAt?: string | null;
+  updatedAt: string;
+};
+
+export type IngestionJobProgress = {
+  stage: 'queued' | 'fetching' | 'reviewing' | 'persisting' | 'enriching' | 'completed' | 'failed';
+  platform: Platform;
+  currentPage: number;
+  maxItemsPerSource: number;
+  retrievedLimit: number;
+  retrievedCount: number;
+  processedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  storedCount: number;
+  duplicateCount: number;
+  currentItems: IngestionJobProgressItem[];
+  batches: IngestionJobProgressBatch[];
+  llmStream?: IngestionJobLlmStream | null;
+  updatedAt: string;
+};
+
 export type IngestionJobError = {
   id: string; tenantId: string; ingestionJobId: string;
   errorCode?: string | null; message: string;
@@ -364,6 +421,9 @@ export type Mention = {
     isDuplicate: boolean; duplicateOfId?: string | null;
     isIrrelevant: boolean; relevanceScore?: number | null;
     automationLikelihood?: number | null; sourceReliability?: number | null;
+    reviewSource?: 'llm' | 'heuristic' | null;
+    reviewReason?: string | null;
+    rejectionReason?: string | null;
   };
   geo?: MentionGeoSummary | null;
   rawPayloadRef?: string | null;

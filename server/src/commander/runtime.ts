@@ -185,7 +185,7 @@ export const runCommanderStreaming = async (params: {
   await emit({ type: 'assistant_start', id: assistantTurnId, createdAt: assistantCreatedAt });
 
   if (!llmAvailable()) {
-    const message = 'LLM is not configured. Set LLM_API_KEY or OPENROUTER_API_KEY, and optionally LLM_MODEL, to enable Commander.';
+    const message = 'AI assistance is not configured yet. Ask an administrator to enable it before using Commander chat.';
     store.put('conversationTurns', assistantTurnId, {
       id: assistantTurnId,
       tenantId: params.ctx.tenantId,

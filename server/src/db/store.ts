@@ -53,9 +53,43 @@ const empty = (): Tables => ({
   schemaMigrations: {},
 });
 
+const dateFields = ['updatedAt', 'finishedAt', 'createdAt', 'collectedAt', 'generatedAt', 'detectedAt', 'startedAt', 'appliedAt'] as const;
+
+const snapshotFreshness = (data: Tables) => {
+  let latestTime = 0;
+  for (const table of Object.values(data)) {
+    for (const record of Object.values(table) as Array<Record<string, unknown>>) {
+      for (const field of dateFields) {
+        const value = record[field];
+        if (typeof value !== 'string') continue;
+        const time = Date.parse(value);
+        if (Number.isFinite(time) && time > latestTime) latestTime = time;
+      }
+    }
+  }
+  return {
+    latestTime,
+    mentions: Object.keys(data.mentions).length,
+    ingestionJobs: Object.keys(data.ingestionJobs).length,
+    completedIngestionJobs: Object.values(data.ingestionJobs).filter((job) => job.status === 'completed').length,
+  };
+};
+
+const shouldPreferFileSnapshot = (databaseData: Tables, fileData: Tables): boolean => {
+  const databaseFreshness = snapshotFreshness(databaseData);
+  const fileFreshness = snapshotFreshness(fileData);
+  if (fileFreshness.mentions > databaseFreshness.mentions && fileFreshness.ingestionJobs >= databaseFreshness.ingestionJobs) return true;
+  if (fileFreshness.completedIngestionJobs > databaseFreshness.completedIngestionJobs && fileFreshness.mentions >= databaseFreshness.mentions) return true;
+  if (fileFreshness.latestTime > databaseFreshness.latestTime + 1000) return true;
+  if (fileFreshness.latestTime < databaseFreshness.latestTime - 1000) return false;
+  return false;
+};
+
 class Store {
   data: Tables = empty();
   private dirty = false;
+  private version = 0;
+  private flushInFlight: Promise<void> | null = null;
   private dataFile = path.join(config.dataDir, 'omnisense.json');
   private legacyDataFiles = [...new Set([
     path.join(config.dataDir, 'civicfalcon.json'),
@@ -69,11 +103,30 @@ class Store {
     return null;
   }
 
+  private async readFileSnapshot(): Promise<Tables | null> {
+    const raw = await this.readDataFile();
+    if (!raw) return null;
+    try {
+      return { ...empty(), ...JSON.parse(raw) as Partial<Tables> };
+    } catch {
+      return null;
+    }
+  }
+
   async load(): Promise<void> {
     if (pgEnabled()) {
       try {
         const parsed = (await pgLoad()) as Tables | null;
-        this.data = parsed ? { ...empty(), ...parsed } : empty();
+        const databaseData = parsed ? { ...empty(), ...parsed } : empty();
+        const fileData = await this.readFileSnapshot();
+        if (fileData && shouldPreferFileSnapshot(databaseData, fileData)) {
+          console.warn('[store] Local snapshot is newer than PostgreSQL snapshot; loading local data and resyncing PostgreSQL.');
+          this.data = fileData;
+          this.markDirty();
+          await this.flush();
+          return;
+        }
+        this.data = databaseData;
         return;
       } catch (e) {
         console.error('[store] Postgres load failed, falling back to file:', (e as Error).message);
@@ -81,24 +134,33 @@ class Store {
     }
     try {
       await fs.mkdir(config.dataDir, { recursive: true });
-      const raw = await this.readDataFile();
-      if (!raw) {
+      const fileData = await this.readFileSnapshot();
+      if (!fileData) {
         this.data = empty();
         return;
       }
-      const parsed = JSON.parse(raw) as Tables;
-      this.data = { ...empty(), ...parsed };
+      this.data = fileData;
     } catch {
       this.data = empty();
     }
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty) return;
+    if (this.flushInFlight) return this.flushInFlight;
+    this.flushInFlight = this.flushUntilClean().finally(() => { this.flushInFlight = null; });
+    return this.flushInFlight;
+  }
+
+  private async flushUntilClean(): Promise<void> {
+    while (this.dirty) await this.flushOnce();
+  }
+
+  private async flushOnce(): Promise<void> {
+    const flushedVersion = this.version;
     if (pgEnabled()) {
       try {
         await pgSave(this.data);
-        this.dirty = false;
+        if (this.version === flushedVersion) this.dirty = false;
         return;
       } catch (e) {
         console.error('[store] Postgres save failed, falling back to file:', (e as Error).message);
@@ -106,10 +168,10 @@ class Store {
     }
     await fs.mkdir(config.dataDir, { recursive: true });
     await fs.writeFile(this.dataFile, JSON.stringify(this.data), 'utf8');
-    this.dirty = false;
+    if (this.version === flushedVersion) this.dirty = false;
   }
 
-  markDirty(): void { this.dirty = true; }
+  markDirty(): void { this.dirty = true; this.version++; }
 
   list<K extends keyof Tables>(table: K): Tables[K][keyof Tables[K]][] {
     return Object.values(this.data[table]) as Tables[K][keyof Tables[K]][];

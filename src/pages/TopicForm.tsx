@@ -178,10 +178,10 @@ const perspectiveOptions: PerspectiveOption[] = [
   {
     value: "media",
     label: "Media observer",
-    helper: "Keep the stance more descriptive and evidence-led.",
+    helper: "Keep the stance more descriptive and signal-led.",
     namePlaceholder: "Newsroom, editorial desk, fact-checking team",
-    contextPlaceholder: "Example: Evaluate from an editorial perspective. Newsworthy evidence, credible claims, and public-interest angles are favorable; unsupported claims or low-signal noise are unfavorable.",
-    favorablePlaceholder: "credible evidence, public-interest angle, newsworthy development",
+    contextPlaceholder: "Example: Evaluate from an editorial perspective. Newsworthy posts, credible claims, and public-interest angles are favorable; unsupported claims or low-signal noise are unfavorable.",
+    favorablePlaceholder: "credible signal, public-interest angle, newsworthy development",
     unfavorablePlaceholder: "unsupported rumor, duplicate noise, unclear source",
   },
   {
@@ -190,7 +190,7 @@ const perspectiveOptions: PerspectiveOption[] = [
     helper: "Separate tone toward the subject from strategic impact.",
     namePlaceholder: "Independent analyst, research team, monitoring desk",
     contextPlaceholder: "Example: Evaluate with a neutral lens. Separate whether the post is positive or negative toward the subject from whether it increases risk, support, or attention.",
-    favorablePlaceholder: "clear evidence, useful signal, balanced public reaction",
+    favorablePlaceholder: "clear signal, useful context, balanced public reaction",
     unfavorablePlaceholder: "ambiguous stance, low relevance, unsupported claim",
   },
   {
@@ -214,7 +214,7 @@ const platformOptions = [
   "Reddit",
   "News / Web",
   "RSS",
-  "GDELT",
+  "News",
 ];
 
 const languageOptions = ["Indonesian", "English", "Javanese", "Sundanese", "Malay", "Mixed language"];
@@ -271,7 +271,7 @@ const platformLabelToApi: Record<string, string> = {
   Reddit: "reddit",
   "News / Web": "web",
   RSS: "rss",
-  GDELT: "gdelt",
+  News: "gdelt",
 };
 
 const apiPlatformToLabel: Record<string, string> = Object.fromEntries(
@@ -1115,7 +1115,7 @@ export default function TopicForm() {
                       <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3">
                         <div>
                           <p className="text-sm font-medium">Verified only</p>
-                          <p className="text-xs text-muted-foreground">Prioritize official or verified identities</p>
+                          <p className="text-xs text-muted-foreground">Prioritize verified identities</p>
                         </div>
                         <Switch checked={draft.verifiedOnly} onCheckedChange={(verifiedOnly) => updateDraft({ verifiedOnly })} />
                       </div>
@@ -1171,13 +1171,13 @@ export default function TopicForm() {
                         </div>
                         <Switch checked={draft.aiReviewEnabled} onCheckedChange={(aiReviewEnabled) => updateDraft({ aiReviewEnabled })} />
                       </div>
-                      <FieldShell label="API cost mode">
+                      <FieldShell label="Collection cost mode">
                         <Select value={draft.costMode} onValueChange={(costMode) => updateDraft({ costMode: costMode as CostMode })}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="free_only">Free / open-source only</SelectItem>
+                            <SelectItem value="free_only">Open sources only</SelectItem>
                             <SelectItem value="balanced">Balanced</SelectItem>
-                            <SelectItem value="manual_paid">Paid APIs only on manual run</SelectItem>
+                            <SelectItem value="manual_paid">Expanded collection on manual run</SelectItem>
                           </SelectContent>
                         </Select>
                       </FieldShell>
@@ -1195,7 +1195,7 @@ export default function TopicForm() {
                         <CircleAlert className="mt-0.5 h-4 w-4 text-primary" />
                         <div>
                           <p className="text-sm font-medium">Ready to persist</p>
-                          <p className="mt-1 text-sm text-muted-foreground">Saving stores the full monitoring brief without starting ingestion. Collection still happens from explicit ingestion or refresh actions.</p>
+                          <p className="mt-1 text-sm text-muted-foreground">Saving stores the full monitoring brief without starting collection. Collection still happens from explicit collect or refresh actions.</p>
                         </div>
                       </div>
                     </div>
@@ -1277,7 +1277,7 @@ export default function TopicForm() {
                 </div>
                 <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
                   <div className="flex items-center gap-2 font-medium"><Database className="h-4 w-4 text-primary" /> Collection</div>
-                  <p className="mt-2 text-muted-foreground">{draft.lookbackDays} days, {draft.refreshMinutes} minute refresh, {draft.costMode.replace("_", " ")}</p>
+                  <p className="mt-2 text-muted-foreground">{draft.lookbackDays} days, {draft.refreshMinutes} minute refresh, {draft.costMode === "free_only" ? "open sources" : draft.costMode === "manual_paid" ? "manual expanded collection" : "balanced collection"}</p>
                 </div>
               </CardContent>
             </Card>

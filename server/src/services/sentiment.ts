@@ -24,6 +24,7 @@ export type BulkSentimentResult = {
 };
 
 const SENTIMENTS = new Set<Sentiment>(['positive', 'negative', 'neutral', 'mixed', 'unknown']);
+const SENTIMENT_TIMEOUT_MS = 45_000;
 const now = () => new Date().toISOString();
 
 const chunks = <T>(items: T[], size: number): T[][] => {
@@ -61,7 +62,7 @@ const parseJson = (content: string): unknown => {
   const arrayStart = stripped.indexOf('[');
   const arrayEnd = stripped.lastIndexOf(']');
   if (arrayStart >= 0 && arrayEnd > arrayStart) return JSON.parse(stripped.slice(arrayStart, arrayEnd + 1));
-  throw new Error('LLM returned non-JSON sentiment output');
+  throw new Error('AI returned an unreadable sentiment output');
 };
 
 const normalizeItems = (parsed: unknown): SentimentItem[] => {
@@ -85,7 +86,7 @@ export const analyzeMentionsSentimentBulk = async (params: {
   limit?: number;
 }): Promise<BulkSentimentResult> => {
   const allMentions = (store.list('mentions') as Mention[])
-    .filter((mention) => mention.tenantId === params.tenantId && mention.topicId === params.topicId);
+    .filter((mention) => mention.tenantId === params.tenantId && mention.topicId === params.topicId && !mention.quality?.isIrrelevant);
   const topic = store.get('topics', params.topicId) as Topic | undefined;
   const selected = params.mentionIds?.length
     ? allMentions.filter((mention) => params.mentionIds!.includes(mention.id))
@@ -106,7 +107,7 @@ export const analyzeMentionsSentimentBulk = async (params: {
   if (selected.length === 0) return result;
   if (!llmAvailable()) {
     result.skipped = selected.length;
-    result.errors.push('LLM is not configured; retained heuristic sentiment.');
+    result.errors.push('AI sentiment is not available; retained rules-based sentiment.');
     return result;
   }
 
@@ -133,6 +134,7 @@ export const analyzeMentionsSentimentBulk = async (params: {
         temperature: 0,
         maxTokens: 2500,
         jsonMode: true,
+        timeoutMs: SENTIMENT_TIMEOUT_MS,
         messages: [
           {
             role: 'system',

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { store } from '../../db/store.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { errorResponse, ok } from '../../lib/api.js';
+import { redactInfrastructureText } from '../../lib/publicSources.js';
 import { enqueueIngestion } from '../../services/ingestion.js';
 import type { IngestionJob, IngestionJobItemOutcome } from '../../types.js';
 
@@ -13,12 +14,18 @@ const triggerSchema = z.object({
   days: z.number().int().min(1).max(90).default(30),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const jobWithoutItemOutcomes = (job: IngestionJob): IngestionJob => {
   const { itemOutcomes, ...metadata } = job.metadata ?? {};
   void itemOutcomes;
-  return { ...job, metadata };
+  return {
+    ...job,
+    metadata: typeof metadata.errorMessage === 'string'
+      ? { ...metadata, errorMessage: redactInfrastructureText(metadata.errorMessage) ?? 'Source request failed.' }
+      : metadata,
+  };
 };
 
 const itemOutcomesFor = (job: IngestionJob): IngestionJobItemOutcome[] =>
@@ -32,6 +39,7 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
       tenantId: req.tenant!.id, topicId: parsed.data.topicId, connectorId: parsed.data.connectorId,
       jobType: 'manual', requestedBy: req.user!.id, maxItems: parsed.data.maxItems,
       days: parsed.data.days, dateFrom: parsed.data.dateFrom, dateTo: parsed.data.dateTo,
+      metadata: parsed.data.metadata,
     });
     return ok(reply, job);
   });
@@ -49,7 +57,9 @@ export const registerIngestionRoutes = (app: FastifyInstance) => {
     const { id } = req.params as { id: string };
     const j = store.get('ingestionJobs', id) as IngestionJob | undefined;
     if (!j || j.tenantId !== req.tenant!.id) return errorResponse(reply, 404, 'NOT_FOUND', 'Job not found');
-    const errors = store.list('ingestionJobErrors').filter((e: any) => e.ingestionJobId === id);
+    const errors = store.list('ingestionJobErrors')
+      .filter((e: any) => e.ingestionJobId === id)
+      .map((e: any) => ({ ...e, message: redactInfrastructureText(e.message) ?? 'Source request failed.' }));
     return ok(reply, { job: jobWithoutItemOutcomes(j), errors, items: itemOutcomesFor(j) });
   });
 };

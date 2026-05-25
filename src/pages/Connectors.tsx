@@ -8,12 +8,19 @@ import { api, type Connector } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 
-interface ProviderStatus { name: string; ready: boolean; mode: string }
+interface SearchSourceStatus { name: string; ready: boolean; mode: string }
+
+const sourceStateLabel = (connector: Connector) => {
+  if (!connector.enabled || connector.status === "disabled") return "Disabled";
+  if (connector.status === "active") return "Ready for collection";
+  if (connector.status === "error") return "Needs attention";
+  return "Needs setup";
+};
 
 export default function Connectors() {
   const qc = useQueryClient();
   const { data: connectors = [] } = useQuery({ queryKey: qk.connectors, queryFn: () => api.get<Connector[]>("/connectors") });
-  const { data: webStatus } = useQuery({ queryKey: qk.webSearchStatus, queryFn: () => api.get<{ providers: ProviderStatus[] }>("/connectors/web-search-status") });
+  const { data: webStatus } = useQuery({ queryKey: qk.webSearchStatus, queryFn: () => api.get<{ sources: SearchSourceStatus[] }>("/connectors/web-search-status") });
 
   const test = useMutation({
     mutationFn: (id: string) => api.post(`/connectors/${id}/test`),
@@ -24,18 +31,18 @@ export default function Connectors() {
     <div className="p-6 lg:p-8 space-y-6">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Connectors</h1>
-        <p className="text-muted-foreground mt-1">Data source integrations — OSINT-first, paid APIs only where needed.</p>
+        <p className="text-muted-foreground mt-1">Manage source availability and collection readiness.</p>
       </div>
 
       {webStatus && (
         <Card>
-          <CardHeader><CardTitle className="text-base">Web search providers</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Search availability</CardTitle></CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
-              {webStatus.providers.map((p) => (
+              {webStatus.sources.map((p) => (
                 <Badge key={p.name} variant={p.ready ? "default" : "secondary"} className="gap-1">
                   {p.ready ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                  {p.name} <span className="text-[10px] opacity-70">({p.mode})</span>
+                  {p.ready ? "Search source ready" : "Search source unavailable"}
                 </Badge>
               ))}
             </div>
@@ -55,18 +62,17 @@ export default function Connectors() {
                 <div className="flex items-start justify-between">
                   <div className="min-w-0">
                     <CardTitle className="text-base">{title}</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1 font-mono uppercase">{c.platform}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{sourceStateLabel(c)}</p>
                   </div>
                   <ConnectorStatusBadge status={c.status} />
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2 text-xs">
-                  <Badge variant="outline" className="capitalize">{c.mode.replace("_", " ")}</Badge>
                   {c.credentialConfigured ? (
-                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Credentials set</Badge>
+                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Configured</Badge>
                   ) : (
-                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">No credentials</Badge>
+                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Setup needed</Badge>
                   )}
                 </div>
                 {budget > 0 && (
@@ -79,11 +85,11 @@ export default function Connectors() {
                   </div>
                 )}
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{c.currentMonthRequests ?? 0} requests this month</span>
+                  <span>{c.currentMonthRequests ?? 0} collection checks this month</span>
                 </div>
                 {c.lastHealthMessage && <p className="text-xs text-muted-foreground italic line-clamp-2">{c.lastHealthMessage}</p>}
                 <Button size="sm" variant="outline" className="w-full" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
-                  Test connection
+                  Check source
                 </Button>
               </CardContent>
             </Card>

@@ -13,7 +13,7 @@ const parseJsonOutput = (content: string): unknown => {
   const start = stripped.indexOf('{');
   const end = stripped.lastIndexOf('}');
   if (start >= 0 && end > start) return JSON.parse(stripped.slice(start, end + 1));
-  throw new Error('LLM returned non-JSON daily brief output');
+  throw new Error('AI returned an unreadable daily brief output');
 };
 
 const mentionForLlm = (mention: Mention, index: number) => ({
@@ -42,7 +42,7 @@ export const generateDailyBrief = async (tenantId: string, topicId: string): Pro
   const topic = store.get('topics', topicId) as Topic | undefined;
   if (!topic) return null;
   const mentions = (store.list('mentions') as Mention[])
-    .filter((m) => m.tenantId === tenantId && m.topicId === topicId)
+    .filter((m) => m.tenantId === tenantId && m.topicId === topicId && !m.quality?.isIrrelevant)
     .sort((a, b) => new Date(b.publishedAt ?? b.collectedAt).getTime() - new Date(a.publishedAt ?? a.collectedAt).getTime())
     .slice(0, 25);
   if (mentions.length === 0) return null;
@@ -229,7 +229,7 @@ export const chatAboutTopicSentiment = async (params: {
 
   if (!llmAvailable()) {
     return {
-      answer: 'LLM is not configured yet, so I cannot have a freeform discussion. Set LLM_API_KEY or OPENROUTER_API_KEY, then ask again. Based on the saved data, review the negative posts first, identify repeated concerns, and avoid making a public statement until you can verify the facts and name concrete next steps.',
+      answer: 'AI discussion is not available yet. Based on the saved data, review the negative posts first, identify repeated concerns, and avoid making a public statement until you can verify the facts and name concrete next steps.',
       llmEnabled: false,
       generatedAt: now(),
     };

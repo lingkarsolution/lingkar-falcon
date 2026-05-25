@@ -1,4 +1,4 @@
-// Web search connector — uses the §31 provider waterfall and treats results as web mentions.
+// Web search connector.
 import { webSearch } from './search/router.js';
 import { sha256 } from '../lib/crypto.js';
 import { indonesianNewsToDrafts, searchIndonesianNews } from '../services/indonesianNews.js';
@@ -9,8 +9,9 @@ export const webConnector: SourceConnector = {
 
   async testConnection(): Promise<ConnectorHealth> {
     const { results, provider } = await webSearch('site:wikipedia.org news', { maxResults: 3 });
-    if (results.length === 0) return { ok: false, status: 'limited', message: 'No web search provider returned results. Configure SEARXNG_BASE_URL, BRAVE_API_KEY, or TAVILY_API_KEY.' };
-    return { ok: true, status: 'active', message: `Web search via ${provider}` };
+    void provider;
+    if (results.length === 0) return { ok: false, status: 'limited', message: 'No search results were available. Check source configuration.' };
+    return { ok: true, status: 'active', message: 'Web search source reachable.' };
   },
 
   async fetchMentions(ctx: IngestionContext): Promise<CanonicalMentionDraft[]> {

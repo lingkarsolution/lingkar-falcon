@@ -14,10 +14,10 @@ export const redditConnector: SourceConnector = {
   async testConnection(): Promise<ConnectorHealth> {
     try {
       const r = await fetch('https://www.reddit.com/search.json?q=test&limit=1', { headers: REDDIT_HEADERS });
-      if (!r.ok) return { ok: false, status: 'failed', message: `Reddit HTTP ${r.status}` };
-      return { ok: true, status: 'active', message: 'Reddit reachable' };
+      if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+      return { ok: true, status: 'active', message: 'Reddit source reachable.' };
     } catch (e) {
-      return { ok: false, status: 'failed', message: `Reddit error: ${(e as Error).message}` };
+      return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
     }
   },
 

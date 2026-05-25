@@ -2,7 +2,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, Settings, MessagesSquare, Plug, Activity, Bell,
-  FileText, Users, Menu, X, ChevronRight, ListChecks, ScrollText, LogOut,
+  FileText, Menu, X, ChevronRight, ListChecks, ScrollText, LogOut,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -23,7 +23,6 @@ const navSections = [
     label: "Intelligence",
     items: [
       { to: "/topics", label: "Topics", icon: ListChecks },
-      { to: "/actors", label: "Tracked Actors", icon: Users },
       { to: "/reports", label: "Intelligence Reports", icon: FileText },
       { to: "/commander", label: "AI Commander", icon: MessagesSquare },
     ],
@@ -32,7 +31,7 @@ const navSections = [
     label: "Data Operations",
     items: [
       { to: "/connectors", label: "Data Sources", icon: Plug },
-      { to: "/ingestion", label: "Collection Jobs", icon: Activity },
+      { to: "/ingestion", label: "Collect Posts Jobs", icon: Activity },
     ],
   },
   {

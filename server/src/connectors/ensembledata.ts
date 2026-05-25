@@ -5,6 +5,7 @@ import type { CanonicalMentionDraft, ConnectorHealth, IngestionContext } from '.
 
 type JsonRecord = Record<string, unknown>;
 type ParamValue = string | number | boolean | null | undefined;
+const ENSEMBLEDATA_TIMEOUT_MS = 45_000;
 
 const asRecord = (value: unknown): JsonRecord | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
@@ -144,32 +145,53 @@ const stringArrayConfig = (ctx: IngestionContext, keys: string[]): string[] => {
 const depthFor = (maxItems: number, pageSize: number, cap = 3): number =>
   Math.max(1, Math.min(cap, Math.ceil(Math.max(1, maxItems) / pageSize)));
 
+const pageWindow = (ctx: IngestionContext): { offset: number; size: number; requestLimit: number } => {
+  const offset = Math.max(0, Number(ctx.pageOffset ?? 0));
+  const size = Math.max(1, Number(ctx.pageSize ?? ctx.maxItems));
+  const rawLimit = Math.max(size, Number(ctx.rawLimit ?? offset + size));
+  return { offset, size, requestLimit: Math.min(rawLimit, offset + size) };
+};
+
+const pageSlice = <T>(items: T[], ctx: IngestionContext, alreadyPaged = false): T[] => {
+  const window = pageWindow(ctx);
+  return alreadyPaged ? items.slice(0, window.size) : items.slice(window.offset, window.offset + window.size);
+};
+
 export const ensembleDataConfigured = (): boolean => Boolean(config.ensembleData.token);
 
 export const ensembleDataRequest = async (endpoint: string, params: Record<string, ParamValue> = {}): Promise<JsonRecord> => {
-  if (!config.ensembleData.token) throw new Error('Set ENSEMBLEDATA_TOKEN');
+  if (!config.ensembleData.token) throw new Error('Source is not configured.');
   const url = new URL(endpoint, config.ensembleData.baseUrl.endsWith('/') ? config.ensembleData.baseUrl : `${config.ensembleData.baseUrl}/`);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
   }
   url.searchParams.set('token', config.ensembleData.token);
-  const response = await fetch(url.toString());
-  if (!response.ok) throw new Error(`EnsembleData HTTP ${response.status}`);
-  const json = await response.json() as JsonRecord;
-  return json;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ENSEMBLEDATA_TIMEOUT_MS);
+  try {
+    const response = await fetch(url.toString(), { signal: controller.signal });
+    if (!response.ok) throw new Error(`Source request failed with status ${response.status}`);
+    const json = await response.json() as JsonRecord;
+    return json;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('Source request timed out.');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 const ensembleEmpty = (platform: Platform, reason: string): Error =>
-  new Error(`EnsembleData ${platform} returned no items: ${reason}`);
+  new Error(`No items were available for ${platform}: ${reason}`);
 
 export const ensembleDataHealth = async (label: string): Promise<ConnectorHealth> => {
-  if (!config.ensembleData.token) return { ok: false, status: 'not_configured', message: 'Set ENSEMBLEDATA_TOKEN' };
+  if (!config.ensembleData.token) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
   try {
     const date = new Date().toISOString().slice(0, 10);
     await ensembleDataRequest('customer/get-used-units', { date });
-    return { ok: true, status: 'active', message: `EnsembleData reachable for ${label}` };
+    return { ok: true, status: 'active', message: `${label} source reachable.` };
   } catch (error) {
-    return { ok: false, status: 'failed', message: `EnsembleData error: ${(error as Error).message}` };
+    return { ok: false, status: 'failed', message: (error as Error).message };
   }
 };
 
@@ -214,9 +236,10 @@ const youtubeWatchUrl = (post: unknown, sourceId: string | null): string | null 
 export const fetchEnsembleYouTubeMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
   const keyword = queryFromContext(ctx);
   if (!keyword) return [];
+  const window = pageWindow(ctx);
   const json = await ensembleDataRequest('youtube/search', {
     keyword,
-    depth: depthFor(ctx.maxItems, 20),
+    depth: depthFor(window.requestLimit, 20),
     start_cursor: '',
     period: 'month',
     sorting: 'time',
@@ -259,9 +282,9 @@ export const fetchEnsembleYouTubeMentions = async (ctx: IngestionContext): Promi
         comments: firstNumber(post, ['commentCount', 'comments', 'stats.comments']),
       },
     });
-    if (drafts.length >= ctx.maxItems) break;
+    if (drafts.length >= window.requestLimit) break;
   }
-  return drafts.filter((draft) => Boolean(draft.text || draft.title || draft.sourceUrl));
+  return pageSlice(drafts.filter((draft) => Boolean(draft.text || draft.title || draft.sourceUrl)), ctx);
 };
 
 const tiktokAweme = (post: unknown): unknown => asRecord(getPath(post, 'aweme_info')) ?? asRecord(getPath(post, 'awemeInfo')) ?? post;
@@ -282,7 +305,7 @@ const threadsPostsFromResult = (item: unknown): unknown[] => {
     .map((entry) => asRecord(getPath(entry, 'post')) ?? entry)
     .filter((entry) => asRecord(entry));
   if (nested.length > 0) return nested;
-  return [asRecord(getPath(item, 'node.post')) ?? asRecord(getPath(item, 'post')) ?? item];
+  return [asRecord(getPath(item, 'node.post')) ?? asRecord(getPath(item, 'post')) ?? asRecord(getPath(item, 'media')) ?? item];
 };
 
 const threadsText = (post: unknown): string | null => {
@@ -310,7 +333,7 @@ const threadsSourceUrl = (post: unknown, username: string | null, sourceId: stri
   return sourceId ? `https://www.threads.net/t/${sourceId}` : null;
 };
 
-const mapThreadsPosts = (posts: unknown[], ctx: IngestionContext): CanonicalMentionDraft[] => {
+const mapThreadsPosts = (posts: unknown[], ctx: IngestionContext, alreadyPaged = false): CanonicalMentionDraft[] => {
   const drafts: CanonicalMentionDraft[] = [];
   for (const rawPost of posts.flatMap(threadsPostsFromResult)) {
     const post = rawPost;
@@ -356,9 +379,9 @@ const mapThreadsPosts = (posts: unknown[], ctx: IngestionContext): CanonicalMent
         engagementTotal: (likes ?? 0) + (replies ?? 0) + (reposts ?? 0) + (quotes ?? 0),
       },
     });
-    if (drafts.length >= ctx.maxItems) break;
+    if (drafts.length >= pageWindow(ctx).requestLimit) break;
   }
-  return drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl));
+  return pageSlice(drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl)), ctx, alreadyPaged);
 };
 
 export const fetchEnsembleThreadsMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
@@ -369,16 +392,22 @@ export const fetchEnsembleThreadsMentions = async (ctx: IngestionContext): Promi
     sorting: '1',
   });
   const root = json.data ?? json;
-  const posts = Array.isArray(root) ? root : firstArray(root, ['posts', 'data']);
-  return mapThreadsPosts(posts, ctx).slice(0, ctx.maxItems);
+  const posts = Array.isArray(root) ? root : firstArray(root, [
+    'posts', 'items', 'results', 'threads', 'data',
+    'data.posts', 'data.items', 'data.results', 'data.threads',
+    'result.posts', 'result.items', 'result.results', 'result.data',
+    'response.posts', 'response.items', 'response.results', 'response.data',
+  ]);
+  return mapThreadsPosts(posts, ctx, true);
 };
 
 export const fetchEnsembleTikTokMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
   const keyword = queryFromContext(ctx);
   if (!keyword) return [];
+  const window = pageWindow(ctx);
   const json = await ensembleDataRequest('tt/keyword/search', {
     name: keyword,
-    cursor: 0,
+    cursor: window.offset,
     period: periodFromContext(ctx),
     sorting: '2',
     country: regionFromContext(ctx),
@@ -425,9 +454,9 @@ export const fetchEnsembleTikTokMentions = async (ctx: IngestionContext): Promis
         saves: firstNumber(post, ['statistics.collect_count', 'stats.collectCount', 'collect_count']),
       },
     });
-    if (drafts.length >= ctx.maxItems) break;
+    if (drafts.length >= window.size) break;
   }
-  return drafts.filter((draft) => Boolean(draft.text || draft.title || draft.sourceUrl));
+  return pageSlice(drafts.filter((draft) => Boolean(draft.text || draft.title || draft.sourceUrl)), ctx, true);
 };
 
 const instagramCaption = (post: unknown): string | null => {
@@ -483,9 +512,9 @@ const mapInstagramPosts = (posts: unknown[], ctx: IngestionContext, authorHint?:
         comments: firstNumber(post, ['comment_count', 'comments_count', 'edge_media_to_comment.count']),
       },
     });
-    if (drafts.length >= ctx.maxItems) break;
+    if (drafts.length >= pageWindow(ctx).requestLimit) break;
   }
-  return drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl));
+  return pageSlice(drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl)), ctx);
 };
 
 const resolveInstagramUserIds = async (ctx: IngestionContext): Promise<Array<{ id: string; username?: string }>> => {
@@ -515,11 +544,12 @@ const resolveInstagramUserIds = async (ctx: IngestionContext): Promise<Array<{ i
 export const fetchEnsembleInstagramMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
   const users = await resolveInstagramUserIds(ctx);
   if (users.length === 0) {
-    throw ensembleEmpty('instagram', 'Instagram EnsembleData does not provide broad post keyword search. Configure ensembleInstagramUsernames/instagramUsernames or ensembleInstagramUserIds/instagramUserIds on the Instagram connector, or use a topic keyword that resolves to public Instagram users.');
+    throw ensembleEmpty('instagram', 'This source requires configured accounts or a topic keyword that resolves to public accounts.');
   }
+  const window = pageWindow(ctx);
   const drafts: CanonicalMentionDraft[] = [];
   for (const user of users) {
-    const remaining = ctx.maxItems - drafts.length;
+    const remaining = window.requestLimit - drafts.length;
     if (remaining <= 0) break;
     const json = await ensembleDataRequest('instagram/user/posts', {
       user_id: user.id,
@@ -532,7 +562,7 @@ export const fetchEnsembleInstagramMentions = async (ctx: IngestionContext): Pro
     const root = asRecord(json.data) ?? json;
     drafts.push(...mapInstagramPosts(firstArray(root, ['posts', 'data']), ctx, user));
   }
-  return drafts.slice(0, ctx.maxItems);
+  return pageSlice(drafts, ctx);
 };
 
 const twitterUserIds = async (ctx: IngestionContext): Promise<Array<{ id: string; username?: string }>> => {
@@ -551,11 +581,12 @@ const twitterUserIds = async (ctx: IngestionContext): Promise<Array<{ id: string
 export const fetchEnsembleXMentions = async (ctx: IngestionContext): Promise<CanonicalMentionDraft[]> => {
   const users = await twitterUserIds(ctx);
   if (users.length === 0) {
-    throw ensembleEmpty('x', 'Twitter/X EnsembleData exposes user timeline and post lookup endpoints, not broad keyword search. Configure ensembleTwitterUsernames/xUsernames or ensembleTwitterUserIds/xUserIds on the X connector.');
+    throw ensembleEmpty('x', 'This source requires configured accounts for public timeline collection.');
   }
+  const window = pageWindow(ctx);
   const drafts: CanonicalMentionDraft[] = [];
   for (const user of users) {
-    const remaining = ctx.maxItems - drafts.length;
+    const remaining = window.requestLimit - drafts.length;
     if (remaining <= 0) break;
     const json = await ensembleDataRequest('twitter/user/tweets', { id: user.id });
     const tweets = firstArray(json, ['data']).slice(0, remaining);
@@ -602,8 +633,8 @@ export const fetchEnsembleXMentions = async (ctx: IngestionContext): Promise<Can
           engagementTotal: (likes ?? 0) + (replies ?? 0) + (reposts ?? 0) + (quotes ?? 0),
         },
       });
-      if (drafts.length >= ctx.maxItems) break;
+      if (drafts.length >= window.requestLimit) break;
     }
   }
-  return drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl));
+  return pageSlice(drafts.filter((draft) => Boolean(draft.text || draft.sourceUrl)), ctx);
 };

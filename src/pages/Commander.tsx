@@ -111,25 +111,73 @@ const upsertTool = (tools: ToolCallView[] = [], next: ToolCallView) => {
   return tools.map((item) => item.id === next.id ? { ...item, ...next } : item);
 };
 
+const publicToolNames: Record<string, string> = {
+  search_mentions: "Search saved posts",
+  search_web: "Search public web",
+  web_search: "Search public web",
+  web_fetch: "Read source page",
+  search_news: "Search news",
+  search_gdelt_news: "Search news",
+  get_sentiment_timeseries: "Analyze sentiment timeline",
+  get_platform_distribution: "Analyze platform mix",
+  get_top_entities: "Extract entities",
+  analyze_topic_sentiment: "Analyze sentiment",
+  cluster_narratives: "Cluster narratives",
+  compare_entities: "Compare entities",
+  find_amplifiers: "Find amplifiers",
+  detect_risk_events: "Detect risks",
+  monitor_actor: "Monitor actor",
+  list_risk_events: "List risks",
+  create_topic: "Create topic",
+  create_alert_rule: "Create alert",
+  generate_report: "Generate report",
+  trigger_ingestion: "Start collection",
+  run_intelligence_cycle: "Run intelligence cycle",
+  list_topics: "List topics",
+  list_connectors: "Check source readiness",
+  usage_status: "Check usage",
+  explain_score: "Explain score",
+};
+
+const toolTitle = (name: string) => publicToolNames[name] ?? "Run analysis step";
+
+const toolSummary = (value: unknown, waitingText: string) => {
+  if (value === undefined) return waitingText;
+  if (!value || typeof value !== "object") return "Step completed.";
+  const record = value as Record<string, unknown>;
+  const count = typeof record.count === "number" ? record.count : undefined;
+  const results = Array.isArray(record.results) ? record.results.length : undefined;
+  const articles = Array.isArray(record.articles) ? record.articles.length : undefined;
+  const items = Array.isArray(record.items) ? record.items.length : undefined;
+  const updated = typeof record.updated === "number" ? record.updated : undefined;
+  if (count !== undefined) return `${count} items found.`;
+  if (results !== undefined) return `${results} results found.`;
+  if (articles !== undefined) return `${articles} articles found.`;
+  if (items !== undefined) return `${items} items returned.`;
+  if (updated !== undefined) return `${updated} records updated.`;
+  return "Step completed.";
+};
+
 function ToolPanel({ toolCall }: { toolCall: ToolCallView }) {
   const ok = toolCall.status === "ok";
   const running = toolCall.status === "running";
+  const title = toolTitle(toolCall.toolName);
   return (
     <details className="group rounded-md border border-border bg-background/80 text-xs">
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 outline-none">
         {running ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : ok ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
-        <span className="min-w-0 flex-1 truncate font-medium">{toolCall.toolName}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         {toolCall.durationMs !== undefined && <span className="text-[11px] text-muted-foreground">{toolCall.durationMs}ms</span>}
         <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">{toolCall.status}</Badge>
       </summary>
       <div className="grid gap-2 border-t border-border p-3 md:grid-cols-2">
         <div className="min-w-0 space-y-1">
-          <p className="font-medium text-muted-foreground">Input</p>
-          <pre className="max-h-56 overflow-auto rounded-md bg-muted p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words">{stringify(toolCall.input)}</pre>
+          <p className="font-medium text-muted-foreground">Request</p>
+          <div className="rounded-md bg-muted p-2 text-[11px] leading-relaxed text-muted-foreground">{toolSummary(toolCall.input, "Preparing request...")}</div>
         </div>
         <div className="min-w-0 space-y-1">
           <p className="font-medium text-muted-foreground">Result</p>
-          <pre className="max-h-56 overflow-auto rounded-md bg-muted p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words">{toolCall.output === undefined ? "Waiting for result..." : stringify(toolCall.output)}</pre>
+          <div className="rounded-md bg-muted p-2 text-[11px] leading-relaxed text-muted-foreground">{toolSummary(toolCall.output, "Waiting for result...")}</div>
         </div>
       </div>
     </details>

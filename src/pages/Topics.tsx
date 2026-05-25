@@ -37,8 +37,8 @@ function PlatformMark({ platform, className = "h-4 w-4" }: { platform: Platform;
 const sourceLabels = {
   cached_mentions: "Cached mentions",
   public_search: "Public search",
-  connector: "Connector",
-  ensembledata: "EnsembleData",
+  connector: "Collected source",
+  ensembledata: "Social signals",
   mixed: "Mixed sources",
 } as const;
 
@@ -173,7 +173,7 @@ export default function Topics() {
           <DialogHeader>
             <DialogTitle>Delete monitored topic</DialogTitle>
             <DialogDescription>
-              This removes “{deletingTopic?.title}” from monitored topics. Existing stored evidence may remain in the data store, but this topic will no longer appear in the list.
+              This removes “{deletingTopic?.title}” from monitored topics. Existing collected posts may remain in the data store, but this topic will no longer appear in the list.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -210,7 +210,7 @@ export default function Topics() {
             <CardHeader className="gap-4 space-y-0 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <CardTitle className="text-base flex items-center gap-2"><Sparkles className="h-4 w-4" /> Trending Topics</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Cached discovery grouped by platform. External APIs only run when Refresh is clicked.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Cached discovery grouped by platform. Live source refresh only runs when Refresh is clicked.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {trendSnapshot?.generatedAt && (

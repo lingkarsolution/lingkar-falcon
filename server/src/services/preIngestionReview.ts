@@ -35,7 +35,17 @@ export type PreIngestionReviewResult = {
   drafts: ReviewedMentionDraft[];
 };
 
+export type PreIngestionReviewStreamEvent = {
+  status: 'streaming' | 'completed' | 'failed' | 'fallback';
+  batch: number;
+  totalBatches: number;
+  candidates: number;
+  text: string;
+  error?: string | null;
+};
+
 const REVIEW_BATCH_SIZE = 15;
+const REVIEW_TIMEOUT_MS = 45_000;
 const RELEVANCE_THRESHOLD = 0.55;
 const FALLBACK_RELEVANCE_THRESHOLD = 0.45;
 const SENTIMENTS = new Set<Sentiment>(['positive', 'negative', 'neutral', 'mixed', 'unknown']);
@@ -68,7 +78,7 @@ const parseJson = (content: string): unknown => {
   const objectStart = stripped.indexOf('{');
   const objectEnd = stripped.lastIndexOf('}');
   if (objectStart >= 0 && objectEnd > objectStart) return JSON.parse(stripped.slice(objectStart, objectEnd + 1));
-  throw new Error('LLM returned non-JSON pre-ingestion review output');
+  throw new Error('AI returned an unreadable pre-ingestion review output');
 };
 
 const heuristicReview = (topic: Topic, draft: CanonicalMentionDraft): PreIngestionReview => {
@@ -86,7 +96,7 @@ const heuristicReview = (topic: Topic, draft: CanonicalMentionDraft): PreIngesti
     sentiment: sentiment.sentiment,
     sentimentConfidence: sentiment.confidence,
     summary: null,
-    reason: 'Heuristic fallback review because LLM pre-ingestion review was unavailable.',
+    reason: 'Rules-based review because AI pre-ingestion review was unavailable.',
     source: 'heuristic',
   };
 };
@@ -112,7 +122,11 @@ const normalizeItems = (parsed: unknown, relevanceThreshold = RELEVANCE_THRESHOL
   return output;
 };
 
-export const reviewDraftsBeforeIngestion = async (topic: Topic, drafts: CanonicalMentionDraft[]): Promise<PreIngestionReviewResult> => {
+export const reviewDraftsBeforeIngestion = async (
+  topic: Topic,
+  drafts: CanonicalMentionDraft[],
+  options: { onLlmStream?: (event: PreIngestionReviewStreamEvent) => void | Promise<void> } = {},
+): Promise<PreIngestionReviewResult> => {
   const aiReviewEnabled = topic.monitoringBrief?.relevance?.aiReviewEnabled ?? true;
   const result: PreIngestionReviewResult = {
     llmEnabled: llmAvailable() && aiReviewEnabled,
@@ -127,6 +141,10 @@ export const reviewDraftsBeforeIngestion = async (topic: Topic, drafts: Canonica
   if (drafts.length === 0) return result;
 
   if (!aiReviewEnabled || !llmAvailable()) {
+    await options.onLlmStream?.({
+      status: 'fallback', batch: 0, totalBatches: 0, candidates: drafts.length, text: '',
+      error: aiReviewEnabled ? 'AI review is not available; used rules-based relevance filtering.' : 'AI pre-ingestion review is disabled for this topic; used rules-based relevance filtering.',
+    });
     for (const draft of drafts) {
       const review = heuristicReview(topic, draft);
       const reviewedDraft = { ...draft, preIngestionReview: review };
@@ -135,14 +153,18 @@ export const reviewDraftsBeforeIngestion = async (topic: Topic, drafts: Canonica
       else result.rejected++;
     }
     result.kept = result.drafts.length;
-    result.errors.push(aiReviewEnabled ? 'LLM is not configured; used heuristic pre-ingestion relevance filter.' : 'AI pre-ingestion review is disabled for this topic; used heuristic relevance filter.');
+    result.errors.push(aiReviewEnabled ? 'AI review is not available; used rules-based relevance filtering.' : 'AI pre-ingestion review is disabled for this topic; used rules-based relevance filtering.');
     return result;
   }
 
   const relevanceThreshold = topicRelevanceThreshold(topic);
+  const draftBatches = chunks(drafts, REVIEW_BATCH_SIZE);
 
   let globalIndex = 0;
-  for (const batch of chunks(drafts, REVIEW_BATCH_SIZE)) {
+  for (const [batchIndex, batch] of draftBatches.entries()) {
+    const batchNumber = batchIndex + 1;
+    const totalBatches = draftBatches.length;
+    let streamedText = '';
     const candidates = batch.map((draft) => {
       const id = `candidate_${globalIndex++}`;
       return {
@@ -166,6 +188,27 @@ export const reviewDraftsBeforeIngestion = async (topic: Topic, drafts: Canonica
         temperature: 0,
         maxTokens: 2600,
         jsonMode: true,
+        timeoutMs: REVIEW_TIMEOUT_MS,
+        stream: true,
+        onStreamEvent: async (event) => {
+          if (event.type === 'start') {
+            streamedText = '';
+            await options.onLlmStream?.({ status: 'streaming', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
+            return;
+          }
+          if (event.type === 'text_delta') {
+            streamedText = `${streamedText}${event.text ?? ''}`.slice(-12_000);
+            await options.onLlmStream?.({ status: 'streaming', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
+            return;
+          }
+          if (event.type === 'error') {
+            await options.onLlmStream?.({ status: 'failed', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: event.error ?? 'AI review stream error' });
+            return;
+          }
+          if (event.type === 'finish') {
+            await options.onLlmStream?.({ status: 'completed', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText });
+          }
+        },
         messages: [
           {
             role: 'system',
@@ -193,6 +236,7 @@ export const reviewDraftsBeforeIngestion = async (topic: Topic, drafts: Canonica
     } catch (error) {
       result.failed += batch.length;
       result.errors.push((error as Error).message);
+      await options.onLlmStream?.({ status: 'fallback', batch: batchNumber, totalBatches, candidates: batch.length, text: streamedText, error: (error as Error).message });
       for (const draft of batch) {
         const review = heuristicReview(topic, draft);
         const reviewedDraft = { ...draft, preIngestionReview: review };

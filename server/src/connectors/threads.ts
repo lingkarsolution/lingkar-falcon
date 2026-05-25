@@ -1,4 +1,4 @@
-// Threads connector — EnsembleData public keyword search preferred, official Threads API fallback.
+// Threads connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleThreadsMentions } from './ensembledata.js';
@@ -7,16 +7,16 @@ import type { SourceConnector, CanonicalMentionDraft, IngestionContext, Connecto
 const officialFields = 'id,text,media_type,media_url,permalink,timestamp,username,shortcode,thumbnail_url,has_replies,is_quote_post,is_reply';
 
 const testOfficialThreads = async (): Promise<ConnectorHealth> => {
-  if (!config.threads.accessToken) return { ok: false, status: 'not_configured', message: 'Set THREADS_ACCESS_TOKEN or ENSEMBLEDATA_TOKEN' };
+  if (!config.threads.accessToken) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
   try {
     const url = new URL('https://graph.threads.net/v1.0/me');
     url.searchParams.set('fields', 'id,username');
     url.searchParams.set('access_token', config.threads.accessToken);
     const response = await fetch(url.toString());
-    if (!response.ok) return { ok: false, status: response.status === 429 ? 'limited' : 'failed', message: `Threads HTTP ${response.status}` };
-    return { ok: true, status: 'active', message: 'Threads official API reachable' };
+    if (!response.ok) return { ok: false, status: response.status === 429 ? 'limited' : 'failed', message: 'Source request failed.' };
+    return { ok: true, status: 'active', message: 'Threads source reachable.' };
   } catch (error) {
-    return { ok: false, status: 'failed', message: `Threads error: ${(error as Error).message}` };
+    return { ok: false, status: 'failed', message: `Source request failed: ${(error as Error).message}` };
   }
 };
 
@@ -33,7 +33,7 @@ const fetchOfficialThreadsMentions = async (ctx: IngestionContext): Promise<Cano
   url.searchParams.set('access_token', config.threads.accessToken);
 
   const response = await fetch(url.toString());
-  if (!response.ok) throw new Error(`Threads HTTP ${response.status}`);
+  if (!response.ok) throw new Error('Source request failed.');
   const json = await response.json() as { data?: any[] };
 
   const drafts: CanonicalMentionDraft[] = [];
@@ -83,7 +83,7 @@ export const threadsConnector: SourceConnector = {
       const ensemble = await ensembleDataHealth('Threads');
       if (ensemble.ok || !config.threads.accessToken) return ensemble;
       const official = await testOfficialThreads();
-      if (official.ok) return { ...official, message: `${ensemble.message}; official Threads fallback reachable` };
+      if (official.ok) return { ...official, message: 'Threads source reachable.' };
       return ensemble;
     }
     return testOfficialThreads();

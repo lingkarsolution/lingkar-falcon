@@ -1,4 +1,4 @@
-// X API v2 — paid tier required. https://docs.x.com/x-api/posts/recent-search
+// X connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleXMentions } from './ensembledata.js';
@@ -13,11 +13,11 @@ export const xConnector: SourceConnector = {
       const r = await fetch('https://api.twitter.com/2/tweets/search/recent?query=test&max_results=10', {
         headers: { Authorization: `Bearer ${config.x.bearerToken}` },
       });
-      if (r.status === 429) return { ok: false, status: 'limited', message: 'X API rate-limited' };
-      if (!r.ok) return { ok: false, status: 'failed', message: `X HTTP ${r.status}` };
-      return { ok: true, status: 'active', message: 'X API reachable' };
+      if (r.status === 429) return { ok: false, status: 'limited', message: 'Source rate limit reached.' };
+      if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+      return { ok: true, status: 'active', message: 'X source reachable.' };
     } catch (e) {
-      return { ok: false, status: 'failed', message: `X error: ${(e as Error).message}` };
+      return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
     }
   },
 

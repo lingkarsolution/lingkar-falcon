@@ -5,6 +5,7 @@ import { store } from './store.js';
 import { newId, hashPassword, verifyPassword } from '../lib/crypto.js';
 import { analyzeSentiment, computeAutomationLikelihood, computeRelevanceScore, computeEngagementTotal, extractEntities, detectEmotions, detectIntent, detectLanguage } from '../lib/nlp.js';
 import { enrichMentionsGeo, seedDefaultLocations } from '../services/geoEnrichment.js';
+import { publicPlatformLabel, redactInfrastructureText } from '../lib/publicSources.js';
 import type { Connector, Mention, Platform, ConnectorMode, ConnectorStatus, Tenant, User } from '../types.js';
 
 const now = () => new Date().toISOString();
@@ -67,16 +68,16 @@ const connectorDefaults = (): Array<{
   const threads = ensemble || Boolean(config.threads.accessToken);
   const facebook = Boolean(config.facebook.pageAccessToken);
   return [
-    { platform: 'gdelt', name: 'GDELT (Global news)', mode: 'free', status: 'active', enabled: true },
-    { platform: 'rss', name: 'RSS Feeds', mode: 'free', status: 'active', enabled: true },
-    { platform: 'web', name: 'Web Search (SearXNG first, DDG fallback)', mode: 'free', status: 'active', enabled: true, monthlyBudgetUsd: 25 },
-    { platform: 'reddit', name: 'Reddit Public JSON', mode: 'free', status: 'active', enabled: true },
-    { platform: 'youtube', name: 'YouTube (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: youtube ? 'active' : 'not_configured', enabled: youtube, monthlyBudgetUsd: 50, credentialConfigured: youtube },
-    { platform: 'x', name: 'X / Twitter (EnsembleData + official fallback)', mode: 'paid_api', status: x ? 'active' : 'not_configured', enabled: x, monthlyBudgetUsd: 100, credentialConfigured: x },
-    { platform: 'facebook', name: 'Facebook Pages API (official Graph)', mode: 'official_api', status: facebook ? 'active' : 'not_configured', enabled: facebook, credentialConfigured: facebook },
-    { platform: 'instagram', name: 'Instagram (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: instagram ? 'active' : 'not_configured', enabled: instagram, monthlyBudgetUsd: 50, credentialConfigured: instagram },
-    { platform: 'tiktok', name: 'TikTok (EnsembleData)', mode: 'paid_api', status: ensemble ? 'active' : 'not_configured', enabled: ensemble, monthlyBudgetUsd: 50, credentialConfigured: ensemble },
-    { platform: 'threads', name: 'Threads (EnsembleData + official fallback)', mode: ensemble ? 'paid_api' : 'official_api', status: threads ? 'active' : 'not_configured', enabled: threads, monthlyBudgetUsd: 50, credentialConfigured: threads },
+    { platform: 'gdelt', name: publicPlatformLabel('gdelt'), mode: 'free', status: 'active', enabled: true },
+    { platform: 'rss', name: publicPlatformLabel('rss'), mode: 'free', status: 'active', enabled: true },
+    { platform: 'web', name: publicPlatformLabel('web'), mode: 'free', status: 'active', enabled: true, monthlyBudgetUsd: 25 },
+    { platform: 'reddit', name: publicPlatformLabel('reddit'), mode: 'free', status: 'active', enabled: true },
+    { platform: 'youtube', name: publicPlatformLabel('youtube'), mode: ensemble ? 'paid_api' : 'official_api', status: youtube ? 'active' : 'not_configured', enabled: youtube, monthlyBudgetUsd: 50, credentialConfigured: youtube },
+    { platform: 'x', name: publicPlatformLabel('x'), mode: 'paid_api', status: x ? 'active' : 'not_configured', enabled: x, monthlyBudgetUsd: 100, credentialConfigured: x },
+    { platform: 'facebook', name: publicPlatformLabel('facebook'), mode: 'official_api', status: facebook ? 'active' : 'not_configured', enabled: facebook, credentialConfigured: facebook },
+    { platform: 'instagram', name: publicPlatformLabel('instagram'), mode: ensemble ? 'paid_api' : 'official_api', status: instagram ? 'active' : 'not_configured', enabled: instagram, monthlyBudgetUsd: 50, credentialConfigured: instagram },
+    { platform: 'tiktok', name: publicPlatformLabel('tiktok'), mode: 'paid_api', status: ensemble ? 'active' : 'not_configured', enabled: ensemble, monthlyBudgetUsd: 50, credentialConfigured: ensemble },
+    { platform: 'threads', name: publicPlatformLabel('threads'), mode: ensemble ? 'paid_api' : 'official_api', status: threads ? 'active' : 'not_configured', enabled: threads, monthlyBudgetUsd: 50, credentialConfigured: threads },
   ];
 };
 
@@ -100,12 +101,23 @@ const migrateConnectorDefaults = async (): Promise<void> => {
         });
         continue;
       }
+      const publicName = publicPlatformLabel(existing.platform);
+      const publicHealthMessage = redactInfrastructureText(existing.lastHealthMessage);
+      if (existing.name !== publicName || existing.lastHealthMessage !== publicHealthMessage) {
+        store.put('connectors', existing.id, {
+          ...existing,
+          name: publicName,
+          lastHealthMessage: publicHealthMessage,
+          updatedAt: now(),
+        });
+      }
       if (!['youtube', 'x', 'instagram', 'tiktok', 'threads'].includes(spec.platform)) continue;
       const wasOldTikTokPlaceholder = existing.platform === 'tiktok' && existing.status === 'disabled';
       const shouldPromote = spec.credentialConfigured || wasOldTikTokPlaceholder;
       if (!shouldPromote) continue;
+      const current = store.get('connectors', existing.id) as Connector;
       store.put('connectors', existing.id, {
-        ...existing,
+        ...current,
         name: spec.name,
         mode: spec.mode,
         status: spec.status,

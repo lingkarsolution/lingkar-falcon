@@ -88,7 +88,7 @@ const processAsset = async (mention: Mention, index: number): Promise<void> => {
     const storedAsset = mention.media?.[index];
     if (!storedAsset) return;
     if (!llmAvailable()) {
-      updateMediaAsset(mention, index, { status: 'skipped', error: 'LLM is not configured; stored media but skipped multimodal analysis.' });
+      updateMediaAsset(mention, index, { status: 'skipped', error: 'AI media analysis is not available; stored media without automated analysis.' });
       return;
     }
 

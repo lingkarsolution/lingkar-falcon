@@ -14,6 +14,7 @@ import { seedIfEmpty } from './db/seed.js';
 import { loadSession } from './middleware/auth.js';
 import { registerV1Routes } from './routes/v1/index.js';
 import { llmAvailable } from './commander/llm.js';
+import { recoverInterruptedIngestionJobs } from './services/ingestion.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
 
@@ -28,7 +29,7 @@ app.get('/api/health', async () => ({
   ok: true,
   service: 'omnisense',
   storage: pgEnabled() ? 'postgres' : 'file',
-  llm: llmAvailable(),
+  ai: llmAvailable(),
   time: new Date().toISOString(),
 }));
 
@@ -80,6 +81,11 @@ if (existsSync(webIndexFile)) {
 
 await store.load();
 await seedIfEmpty();
+const recoveredIngestionJobs = recoverInterruptedIngestionJobs();
+if (recoveredIngestionJobs > 0) {
+  app.log.warn(`Marked ${recoveredIngestionJobs} interrupted ingestion job(s) as failed`);
+  await store.flush();
+}
 
 const port = config.port;
 const host = config.host;
