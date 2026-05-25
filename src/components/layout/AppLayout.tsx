@@ -2,7 +2,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, Settings, MessagesSquare, Plug, Activity, Bell,
-  FileText, Users, Menu, X, ChevronRight, ListChecks, ScrollText, LogOut,
+  FileText, Menu, X, ChevronRight, ListChecks, ScrollText, LogOut,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -23,7 +23,6 @@ const navSections = [
     label: "Intelligence",
     items: [
       { to: "/topics", label: "Topics", icon: ListChecks },
-      { to: "/actors", label: "Tracked Actors", icon: Users },
       { to: "/reports", label: "Intelligence Reports", icon: FileText },
       { to: "/commander", label: "AI Commander", icon: MessagesSquare },
     ],
@@ -32,7 +31,7 @@ const navSections = [
     label: "Data Operations",
     items: [
       { to: "/connectors", label: "Data Sources", icon: Plug },
-      { to: "/ingestion", label: "Collection Jobs", icon: Activity },
+      { to: "/ingestion", label: "Collect Posts Jobs", icon: Activity },
     ],
   },
   {
@@ -75,11 +74,11 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
-            <span className="text-primary-foreground font-bold text-sm">CF</span>
+            <span className="text-primary-foreground font-bold text-sm">OS</span>
           </div>
           {sidebarOpen && (
             <div className="min-w-0">
-              <p className="font-semibold text-sm truncate">CivicFalcon</p>
+              <p className="font-semibold text-sm truncate">OmniSense</p>
               {tenant && <p className="text-xs text-sidebar-foreground/60 truncate">{tenant.name}</p>}
             </div>
           )}
@@ -126,7 +125,7 @@ export default function AppLayout() {
           <>
             <Separator className="bg-sidebar-border" />
             <div className="p-4">
-              <p className="text-xs text-sidebar-foreground/50">CivicFalcon v0.1</p>
+              <p className="text-xs text-sidebar-foreground/50">OmniSense v0.1</p>
               <p className="text-xs text-sidebar-foreground/40">Public sentiment intelligence</p>
             </div>
           </>

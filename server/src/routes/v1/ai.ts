@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { store } from '../../db/store.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { errorResponse, ok } from '../../lib/api.js';
+import { redactInfrastructureText } from '../../lib/publicSources.js';
 import { chatCompletion, llmAvailable } from '../../commander/llm.js';
 import { chatAboutTopicSentiment, generateDailyBrief, generateSentimentStrategy, getLatestSentimentStrategy } from '../../services/insights.js';
 import { clusterTopic } from '../../services/clustering.js';
@@ -37,7 +38,7 @@ export const registerAIRoutes = (app: FastifyInstance) => {
   app.post('/topic-description', { preHandler: requireAuth(['admin', 'analyst']) }, async (req, reply) => {
     const parsed = topicDescriptionSchema.safeParse(req.body ?? {});
     if (!parsed.success) return errorResponse(reply, 400, 'INVALID_INPUT', 'Invalid topic title', { issues: parsed.error.issues });
-    if (!llmAvailable()) return errorResponse(reply, 503, 'LLM_NOT_CONFIGURED', 'LLM is not configured');
+    if (!llmAvailable()) return errorResponse(reply, 503, 'AI_NOT_CONFIGURED', 'AI assistance is not configured');
     try {
       const response = await chatCompletion({
         temperature: 0.25,
@@ -45,7 +46,7 @@ export const registerAIRoutes = (app: FastifyInstance) => {
         messages: [
           {
             role: 'system',
-            content: 'You write concise monitored-topic descriptions for an OSINT and public sentiment intelligence system. The description will be used by analysts and by relevance filters to disambiguate noisy social/news data. Write 1-2 plain sentences, max 420 characters. Include the likely subject, domain, and what should count as related evidence. Avoid markdown, labels, quotes, bullets, and generic filler.',
+            content: 'You write concise monitored-topic descriptions for an OSINT and public sentiment intelligence system. The description will be used by analysts and by relevance filters to disambiguate noisy social/news data. Write 1-2 plain sentences, max 420 characters. Include the likely subject, domain, and what should count as related posts. Avoid markdown, labels, quotes, bullets, and generic filler.',
           },
           {
             role: 'user',
@@ -54,10 +55,10 @@ export const registerAIRoutes = (app: FastifyInstance) => {
         ],
       });
       const description = cleanGeneratedDescription(response.choices[0]?.message.content ?? '');
-      if (!description) return errorResponse(reply, 502, 'EMPTY_LLM_RESPONSE', 'LLM returned an empty description');
+      if (!description) return errorResponse(reply, 502, 'EMPTY_AI_RESPONSE', 'AI returned an empty description');
       return ok(reply, { description, llmEnabled: true, generatedAt: new Date().toISOString() });
     } catch (error) {
-      return errorResponse(reply, 500, 'TOPIC_DESCRIPTION_ERROR', (error as Error).message);
+      return errorResponse(reply, 500, 'TOPIC_DESCRIPTION_ERROR', redactInfrastructureText((error as Error).message) ?? 'AI description failed');
     }
   });
 
@@ -108,7 +109,7 @@ export const registerAIRoutes = (app: FastifyInstance) => {
       });
       return ok(reply, result);
     } catch (error) {
-      return errorResponse(reply, 500, 'TOPIC_CHAT_ERROR', (error as Error).message);
+      return errorResponse(reply, 500, 'TOPIC_CHAT_ERROR', redactInfrastructureText((error as Error).message) ?? 'AI chat failed');
     }
   });
 

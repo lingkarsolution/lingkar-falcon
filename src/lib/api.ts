@@ -1,4 +1,4 @@
-// Typed API client against the CivicFalcon /api/v1 surface.
+// Typed API client against the OmniSense /api/v1 surface.
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message);
@@ -38,12 +38,68 @@ export const api = {
 export type Role = 'admin' | 'analyst' | 'viewer';
 export type Sentiment = 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
 export type Platform = string;
+export type TopicSubjectType = 'public_figure' | 'organization' | 'issue' | 'group' | 'brand' | 'event' | 'normal_user' | 'general';
+export type TopicMonitoringObjective = 'reputation' | 'early_warning' | 'sentiment' | 'misinformation' | 'campaign' | 'competitor' | 'complaints';
+export type TopicPerspectiveRole = 'topic_owner' | 'government' | 'opposition' | 'public' | 'competitor' | 'media' | 'neutral_observer' | 'custom';
+export type TopicGeoMode = 'mentioned' | 'author' | 'both';
+export type TopicRelevanceMode = 'broad' | 'balanced' | 'strict';
+export type TopicCostMode = 'free_only' | 'balanced' | 'manual_paid';
+
+export interface TopicMonitoringBrief {
+  setupMode?: 'simple' | 'advanced';
+  subjectType?: TopicSubjectType;
+  objectives: TopicMonitoringObjective[];
+  perspective: {
+    role: TopicPerspectiveRole;
+    name?: string | null;
+    description?: string | null;
+    favorableSignals: string[];
+    unfavorableSignals: string[];
+  };
+  query: {
+    includeKeywords: string[];
+    exactPhrases: string[];
+    hashtags: string[];
+    handles: string[];
+    relatedEntities: string[];
+    excludeKeywords: string[];
+    excludeHashtags: string[];
+    excludeHandles: string[];
+    excludeDomains: string[];
+  };
+  sources: {
+    platforms: Platform[];
+    languages: string[];
+    countries: string[];
+    provinces: string[];
+    cities: string[];
+    geoMode: TopicGeoMode;
+  };
+  audience: {
+    types: string[];
+    minimumFollowers?: number | null;
+    verifiedOnly: boolean;
+    includeLowFollowerAccounts: boolean;
+  };
+  relevance: {
+    mode: TopicRelevanceMode;
+    aiReviewEnabled: boolean;
+  };
+  collection: {
+    lookbackDays: number;
+    refreshMinutes: number;
+    maxItemsPerConnector: number;
+    costMode: TopicCostMode;
+  };
+  alerts: { triggers: string[] };
+}
 
 export interface User { id: string; email: string; name: string; role: Role; }
 export interface Tenant { id: string; name: string; slug: string; }
 export interface Topic {
   id: string; tenantId: string; title: string; description?: string | null; category?: string | null;
   keywords: string[]; excludeKeywords: string[]; platforms: string[]; languages: string[]; regions: string[];
+  monitoringBrief?: TopicMonitoringBrief | null;
   status: 'active' | 'paused' | 'archived'; collectionFrequencyMinutes: number;
   intelligenceSettings?: {
     lookbackDays?: number; maxItemsPerConnector?: number; dailyAnalysisEnabled?: boolean;
@@ -143,6 +199,26 @@ export interface IngestionJob {
 export interface IngestionJobError { id: string; ingestionJobId: string; message: string; createdAt: string; }
 export type IngestionRunItemStatus = 'inserted' | 'skipped';
 export type IngestionRunItemReasonCode = 'stored' | 'duplicate' | 'irrelevant' | 'processing_error';
+export interface IngestionProgressItem {
+  id: string; platform: Platform; sourceType: string; title?: string | null; textPreview?: string | null; sourceUrl?: string | null;
+  status: 'retrieved' | 'reviewing' | 'accepted' | 'rejected' | 'stored' | 'duplicate' | 'error';
+  reason?: string | null; relevanceScore?: number | null; reviewSource?: 'llm' | 'heuristic' | null;
+}
+export interface IngestionProgressBatch {
+  page: number; requested: number; retrieved: number; processed: number; accepted: number; rejected: number; stored: number; duplicates: number;
+  startedAt: string; finishedAt?: string | null;
+}
+export interface IngestionLlmStream {
+  status: 'idle' | 'streaming' | 'completed' | 'failed' | 'fallback';
+  phase: 'pre_ingestion_review' | 'sentiment';
+  title: string; batch: number; totalBatches: number; candidates: number; text: string; error?: string | null; startedAt?: string | null; updatedAt: string;
+}
+export interface IngestionProgress {
+  stage: 'queued' | 'fetching' | 'reviewing' | 'persisting' | 'enriching' | 'completed' | 'failed';
+  platform: Platform; currentPage: number; maxItemsPerSource: number; retrievedLimit: number; retrievedCount: number; processedCount: number;
+  acceptedCount: number; rejectedCount: number; storedCount: number; duplicateCount: number; currentItems: IngestionProgressItem[];
+  batches: IngestionProgressBatch[]; llmStream?: IngestionLlmStream | null; updatedAt: string;
+}
 export interface IngestionRunItem {
   id: string;
   status: IngestionRunItemStatus;

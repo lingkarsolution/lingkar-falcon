@@ -7,8 +7,10 @@ import { generateText } from 'ai';
 import { config } from '../config.js';
 import { store } from '../db/store.js';
 import { blobEnabled, uploadBytes } from '../lib/blob.js';
+import { browserMediaHeaders } from '../lib/browserHeaders.js';
 import { getLlmModel, llmAvailable } from '../commander/llm.js';
-import type { Mention, MentionMediaAsset, Sentiment } from '../types.js';
+import type { Mention, MentionMediaAsset, Sentiment, Topic } from '../types.js';
+import { topicBriefForLlm } from './topicBriefContext.js';
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
@@ -86,7 +88,7 @@ const processAsset = async (mention: Mention, index: number): Promise<void> => {
     const storedAsset = mention.media?.[index];
     if (!storedAsset) return;
     if (!llmAvailable()) {
-      updateMediaAsset(mention, index, { status: 'skipped', error: 'LLM is not configured; stored media but skipped multimodal analysis.' });
+      updateMediaAsset(mention, index, { status: 'skipped', error: 'AI media analysis is not available; stored media without automated analysis.' });
       return;
     }
 
@@ -188,7 +190,7 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
   try {
     return await fetch(url, {
       signal: controller.signal,
-      headers: { 'user-agent': 'CivicFalcon/0.1 media-enrichment' },
+      headers: browserMediaHeaders(config.browserUserAgent),
     });
   } finally {
     clearTimeout(timer);
@@ -196,7 +198,7 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
 };
 
 const sampleAndUploadFrames = async (mention: Mention, asset: MentionMediaAsset, videoBytes: Buffer, contentType: string): Promise<string[]> => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'civicfalcon-media-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'omnisense-media-'));
   const inputPath = path.join(tempDir, `input.${extensionFor(contentType, asset.sourceUrl)}`);
   const framePattern = path.join(tempDir, 'frame-%02d.jpg');
   try {
@@ -231,14 +233,16 @@ const execFileAsync = (command: string, args: string[], timeout: number): Promis
 
 const analyzeImageAsset = async (mention: Mention, asset: MentionMediaAsset): Promise<MediaAnalysis> => {
   const imageUrl = asset.blobUrl ?? asset.thumbnailBlobUrl ?? asset.sourceUrl;
-  const prompt = mediaPrompt(mention, asset, 'Analyze this image evidence. Extract visible claims, objects, people, text/OCR, tone, and topic relevance.');
+  const topic = store.get('topics', mention.topicId) as Topic | undefined;
+  const prompt = mediaPrompt(mention, asset, topic, 'Analyze this image evidence. Extract visible claims, objects, people, text/OCR, topic relevance, and stakeholder-POV sentiment.');
   return generateMediaJson(prompt, [imageUrl]);
 };
 
 const analyzeVideoAsset = async (mention: Mention, asset: MentionMediaAsset): Promise<MediaAnalysis> => {
   const frameUrls = asset.frameBlobUrls?.length ? asset.frameBlobUrls : [asset.thumbnailBlobUrl, asset.thumbnailUrl].filter(Boolean) as string[];
   const transcript = asset.transcript || mention.text || mention.title || '';
-  const prompt = mediaPrompt(mention, asset, `Analyze this video evidence using only the transcript/caption and selected frames. Do not assume unseen content. Transcript/caption:\n${transcript}`);
+  const topic = store.get('topics', mention.topicId) as Topic | undefined;
+  const prompt = mediaPrompt(mention, asset, topic, `Analyze this video evidence using only the transcript/caption and selected frames. Do not assume unseen content. Transcript/caption:\n${transcript}`);
   return generateMediaJson(prompt, frameUrls.slice(0, FRAME_COUNT));
 };
 
@@ -254,7 +258,24 @@ const generateMediaJson = async (prompt: string, imageUrls: string[]): Promise<M
   return parseAnalysis(result.text);
 };
 
-const mediaPrompt = (mention: Mention, asset: MentionMediaAsset, instruction: string): string => `Return only JSON with keys summary, sentiment, confidence, ocrText. Sentiment must be one of positive, negative, neutral, mixed, unknown. Confidence is 0..1.\n\nTopic/mention context:\nPlatform: ${mention.platform}\nSource type: ${mention.sourceType}\nTitle: ${mention.title ?? 'untitled'}\nText/caption: ${mention.text}\nSource URL: ${mention.sourceUrl ?? asset.sourceUrl}\n\n${instruction}`;
+const mediaPrompt = (mention: Mention, asset: MentionMediaAsset, topic: Topic | undefined, instruction: string): string => `Return only JSON with keys summary, sentiment, confidence, ocrText. Sentiment must be one of positive, negative, neutral, mixed, unknown. Confidence is 0..1.
+
+Use the complete topic brief when available. Sentiment is stakeholder-POV sentiment: positive means favorable for the configured POV, negative means harmful for that POV, mixed means both, neutral means no clear POV impact. Apply objectives, include/exclude rules, favorable/unfavorable signals, geo/audience scope, alert triggers, and relevance mode when judging relevance and tone.
+
+Topic brief JSON:
+${topic ? JSON.stringify(topicBriefForLlm(topic), null, 2) : 'null'}
+
+Mention/media context:
+Platform: ${mention.platform}
+Source type: ${mention.sourceType}
+Title: ${mention.title ?? 'untitled'}
+Text/caption: ${mention.text}
+Author: ${mention.author?.displayName ?? mention.author?.username ?? 'unknown'}
+Metrics: ${JSON.stringify(mention.metrics ?? {})}
+Geo: ${JSON.stringify(mention.geo ?? null)}
+Source URL: ${mention.sourceUrl ?? asset.sourceUrl}
+
+${instruction}`;
 
 const parseAnalysis = (raw: string): MediaAnalysis => {
   try {

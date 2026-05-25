@@ -3,20 +3,21 @@
 import { sha256 } from '../lib/crypto.js';
 import { cache } from '../lib/cache.js';
 import { config } from '../config.js';
+import { browserJsonHeaders } from '../lib/browserHeaders.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 
-const UA = config.reddit.userAgent || 'civicfalcon/0.1';
+const REDDIT_HEADERS = browserJsonHeaders(config.reddit.userAgent);
 
 export const redditConnector: SourceConnector = {
   platform: 'reddit',
 
   async testConnection(): Promise<ConnectorHealth> {
     try {
-      const r = await fetch('https://www.reddit.com/search.json?q=test&limit=1', { headers: { 'User-Agent': UA } });
-      if (!r.ok) return { ok: false, status: 'failed', message: `Reddit HTTP ${r.status}` };
-      return { ok: true, status: 'active', message: 'Reddit reachable' };
+      const r = await fetch('https://www.reddit.com/search.json?q=test&limit=1', { headers: REDDIT_HEADERS });
+      if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+      return { ok: true, status: 'active', message: 'Reddit source reachable.' };
     } catch (e) {
-      return { ok: false, status: 'failed', message: `Reddit error: ${(e as Error).message}` };
+      return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
     }
   },
 
@@ -27,7 +28,7 @@ export const redditConnector: SourceConnector = {
     const key = `reddit:${sha256(url)}`;
     let data: any = cache.get(key);
     if (!data) {
-      const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
+      const r = await fetch(url, { headers: REDDIT_HEADERS });
       if (!r.ok) throw new Error(`Reddit HTTP ${r.status}`);
       data = await r.json();
       cache.set(key, data, 600);

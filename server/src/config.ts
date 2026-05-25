@@ -1,6 +1,10 @@
-// Centralized env config for the CivicFalcon API.
+// Centralized env config for the OmniSense API.
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_BROWSER_USER_AGENT, normalizeBrowserUserAgent } from './lib/browserHeaders.js';
+
+const DEFAULT_ADMIN_EMAIL = 'admin@omnisense.local';
+const DEFAULT_DATA_DIR = './.omnisense-data';
 
 const loadEnvFile = (filePath: string): void => {
   if (!existsSync(filePath)) return;
@@ -25,14 +29,20 @@ for (const candidate of [path.resolve(process.cwd(), '.env'), path.resolve(proce
   loadEnvFile(candidate);
 }
 
+const legacyDataDirs = [process.env.CIVICFALCON_DATA_DIR, './.civicfalcon-data']
+  .filter((dir): dir is string => Boolean(dir));
+const browserUserAgent = normalizeBrowserUserAgent(process.env.BROWSER_USER_AGENT);
+
 export const config = {
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '0.0.0.0',
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-  sessionSecret: process.env.SESSION_SECRET ?? 'civicfalcon-dev-secret-change-me',
-  dataDir: process.env.CIVICFALCON_DATA_DIR ?? process.env.DATA_DIR ?? './.civicfalcon-data',
+  sessionSecret: process.env.SESSION_SECRET ?? 'omnisense-dev-secret-change-me',
+  dataDir: process.env.OMNISENSE_DATA_DIR ?? process.env.CIVICFALCON_DATA_DIR ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR,
+  legacyDataDirs,
   databaseUrl: process.env.DATABASE_URL ?? '',
   blobSasUrl: process.env.DATA_STORAGE_SAS_URL ?? '',
+  browserUserAgent,
 
   // LLM (OpenAI-compatible) — required for AI features
   llm: {
@@ -62,12 +72,12 @@ export const config = {
   reddit: {
     clientId: process.env.REDDIT_CLIENT_ID ?? '',
     clientSecret: process.env.REDDIT_CLIENT_SECRET ?? '',
-    userAgent: process.env.REDDIT_USER_AGENT ?? 'civicfalcon/0.1',
+    userAgent: normalizeBrowserUserAgent(process.env.REDDIT_USER_AGENT ?? browserUserAgent ?? DEFAULT_BROWSER_USER_AGENT),
   },
   newsapi: { apiKey: process.env.NEWSAPI_KEY ?? '' },
 
   // Demo admin
-  adminEmail: process.env.ADMIN_EMAIL ?? 'admin@civicfalcon.local',
+  adminEmail: process.env.ADMIN_EMAIL ?? DEFAULT_ADMIN_EMAIL,
   adminPassword: process.env.ADMIN_PASSWORD ?? 'demo123',
 } as const;
 

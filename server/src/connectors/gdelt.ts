@@ -3,6 +3,8 @@
 import { sha256 } from '../lib/crypto.js';
 import { cache } from '../lib/cache.js';
 import { webSearch } from './search/router.js';
+import { config } from '../config.js';
+import { browserJsonHeaders } from '../lib/browserHeaders.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 
 const BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
@@ -40,10 +42,7 @@ const fetchWithTimeout = async (url: string, timeoutMs = 25_000): Promise<Respon
   const timeout = setTimeout(() => ac.abort(), timeoutMs);
   try {
     return await fetch(url, {
-      headers: {
-        Accept: 'application/json,text/plain;q=0.9,*/*;q=0.5',
-        'User-Agent': 'CivicFalcon/0.1 OSINT connector (GDELT DOC 2.0)',
-      },
+      headers: browserJsonHeaders(config.browserUserAgent),
       signal: ac.signal,
     });
   } finally {
@@ -199,15 +198,15 @@ export const gdeltConnector: SourceConnector = {
   async testConnection(): Promise<ConnectorHealth> {
     try {
       const result = await searchGdeltArticles({ query: 'climate', maxRecords: 1, timespanDays: 1 });
-      return { ok: true, status: 'active', message: `GDELT DOC 2.0 reachable (${result.count} sample records)`, details: { endpoint: BASE } };
+      return { ok: true, status: 'active', message: `News source reachable (${result.count} sample records)` };
     } catch (e) {
       try {
         const fallback = await searchGdeltArticlesFallback({ query: 'climate', maxRecords: 1, timespanDays: 1 });
-        return { ok: true, status: 'limited', message: `GDELT primary failed (${(e as Error).message}); web-search fallback returned ${fallback.count} sample records`, details: { endpoint: BASE, fallback: fallback.url } };
+        return { ok: true, status: 'limited', message: `News source had limited availability; web search returned ${fallback.count} sample records` };
       } catch {
         const message = (e as Error).name === 'AbortError'
-          ? 'GDELT timed out after 35s and fallback failed'
-          : `GDELT error: ${(e as Error).message}`;
+          ? 'News source timed out.'
+          : `News source request failed: ${(e as Error).message}`;
         return { ok: false, status: 'failed', message };
       }
     }
@@ -245,7 +244,7 @@ export const gdeltConnector: SourceConnector = {
         .filter(Boolean)
         .join('\n'),
       language: article.language ?? null,
-      author: { displayName: article.domain ?? 'GDELT', profileUrl: article.domain ? `https://${article.domain}` : null },
+      author: { displayName: article.domain ?? 'News source', profileUrl: article.domain ? `https://${article.domain}` : null },
       publishedAt: article.publishedAt ?? null,
       metrics: { views: null, likes: null, comments: null, shares: null, engagementTotal: 0, reachEstimate: null },
     }));

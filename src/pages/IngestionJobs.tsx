@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Rows3, SkipForward } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Plus, RefreshCw, Rows3, SkipForward } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, type IngestionJob, type IngestionJobDetail, type IngestionRunItem } from "@/lib/api";
+import { api, type IngestionJob, type IngestionJobDetail, type IngestionProgress, type IngestionRunItem } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 
 const jobCount = (job: IngestionJob, key: "fetched" | "inserted" | "skipped") => {
@@ -38,6 +40,21 @@ const itemEngagement = (item: IngestionRunItem): number | null => {
       + (metrics.shares ?? metrics.shareCount ?? metrics.reposts ?? 0)
       + (metrics.comments ?? metrics.commentCount ?? 0)
       + (metrics.quotes ?? 0));
+};
+
+const progressOf = (job?: IngestionJob | null): IngestionProgress | null => {
+  const value = job?.metadata?.ingestionProgress;
+  return value && typeof value === "object" ? value as IngestionProgress : null;
+};
+
+const progressPercent = (progress: IngestionProgress | null, job?: IngestionJob | null) => {
+  if (!progress) return job?.status === "completed" || job?.status === "failed" ? 100 : 8;
+  if (progress.stage === "completed" || progress.stage === "failed") return 100;
+  const retrievalPart = progress.retrievedLimit > 0 ? Math.min(40, (progress.retrievedCount / progress.retrievedLimit) * 40) : 0;
+  const processingTarget = Math.max(progress.maxItemsPerSource, progress.processedCount, 1);
+  const processingPart = Math.min(45, (progress.processedCount / processingTarget) * 45);
+  const enrichPart = progress.stage === "enriching" ? 10 : progress.storedCount > 0 ? 5 : 0;
+  return Math.max(8, Math.min(98, Math.round(retrievalPart + processingPart + enrichPart)));
 };
 
 function OutcomeTable({ items, emptyText, loading }: { items: IngestionRunItem[]; emptyText: string; loading?: boolean }) {
@@ -106,30 +123,29 @@ function OutcomeTable({ items, emptyText, loading }: { items: IngestionRunItem[]
 
 export default function IngestionJobs() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const { data = [] } = useQuery({
+  const jobs = useQuery({
     queryKey: qk.ingestionJobs,
     queryFn: () => api.get<IngestionJob[]>("/ingestion/jobs"),
-    refetchInterval: 5000,
   });
+  const data = jobs.data ?? [];
   const detail = useQuery({
     queryKey: ["ingestion-job-detail", selectedJobId],
     queryFn: () => api.get<IngestionJobDetail>(`/ingestion/jobs/${selectedJobId}`),
     enabled: Boolean(selectedJobId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.job.status;
-      return status === "queued" || status === "pending" || status === "running" ? 2000 : false;
-    },
   });
 
   useEffect(() => {
+    if (jobs.isLoading || jobs.isError) return;
     if (data.length === 0) {
       setSelectedJobId(null);
       return;
     }
     if (!selectedJobId || !data.some((job) => job.id === selectedJobId)) setSelectedJobId(data[0].id);
-  }, [data, selectedJobId]);
+  }, [data, jobs.isError, jobs.isLoading, selectedJobId]);
 
   const selectedJob = detail.data?.job ?? data.find((job) => job.id === selectedJobId) ?? null;
+  const selectedProgress = progressOf(selectedJob);
+  const selectedProgressPercent = progressPercent(selectedProgress, selectedJob);
   const items = detail.data?.items ?? [];
   const errors = detail.data?.errors ?? [];
   const groupedItems = useMemo(() => ({
@@ -139,16 +155,27 @@ export default function IngestionJobs() {
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Ingestion Jobs</h1>
-        <p className="text-muted-foreground mt-1">Live view of data collection runs (auto-refreshes every 5s).</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Collection Runs</h1>
+          <p className="text-muted-foreground mt-1">Open a run to inspect collected, stored, and skipped posts.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => { void jobs.refetch(); if (selectedJobId) void detail.refetch(); }} disabled={jobs.isFetching || detail.isFetching}>
+            {jobs.isFetching || detail.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Refresh
+          </Button>
+          <Button asChild>
+            <Link to="/ingestions/form"><Plus className="h-4 w-4" /> Collect posts</Link>
+          </Button>
+        </div>
       </div>
       <Card>
         <CardContent className="p-0">
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/30">
               <tr className="text-left">
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide">Job</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide">Run</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide">Status</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide text-right">Fetched</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide text-right">Stored</th>
@@ -158,9 +185,13 @@ export default function IngestionJobs() {
               </tr>
             </thead>
             <tbody>
-              {data.map((j) => (
+              {jobs.isLoading && <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground"><span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading collection runs...</span></td></tr>}
+              {jobs.isError && <tr><td colSpan={7} className="px-4 py-12 text-center text-destructive">Could not load collection runs.</td></tr>}
+              {!jobs.isLoading && !jobs.isError && data.map((j) => (
                 <tr key={j.id} className={selectedJobId === j.id ? "border-b border-border bg-muted/40 last:border-b-0" : "border-b border-border last:border-b-0"}>
-                  <td className="px-4 py-3 font-mono text-xs">{j.id.slice(0, 12)}…</td>
+                  <td className="px-4 py-3">
+                    <button type="button" className="font-mono text-xs text-blue-600 hover:underline" onClick={() => setSelectedJobId(j.id)}>{j.id.slice(0, 12)}...</button>
+                  </td>
                   <td className="px-4 py-3"><Badge variant="outline" className={statusClass(j.status)}>{j.status}</Badge></td>
                   <td className="px-4 py-3 text-right tabular-nums">{jobCount(j, "fetched")}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{jobCount(j, "inserted")}</td>
@@ -173,7 +204,7 @@ export default function IngestionJobs() {
                   </td>
                 </tr>
               ))}
-              {data.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No ingestion jobs yet.</td></tr>}
+              {!jobs.isLoading && !jobs.isError && data.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No collection runs yet.</td></tr>}
             </tbody>
           </table>
         </CardContent>
@@ -184,10 +215,14 @@ export default function IngestionJobs() {
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base">Run Details</CardTitle>
+                <CardTitle className="text-base">Run details</CardTitle>
                 <p className="mt-1 font-mono text-xs text-muted-foreground">{selectedJob.id}</p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => { void detail.refetch(); }} disabled={detail.isFetching}>
+                  {detail.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Refresh details
+                </Button>
                 <Badge variant="outline" className={statusClass(selectedJob.status)}>{selectedJob.status}</Badge>
                 <Badge variant="outline">Fetched {jobCount(selectedJob, "fetched")}</Badge>
                 <Badge variant="outline">Stored {jobCount(selectedJob, "inserted")}</Badge>
@@ -196,6 +231,43 @@ export default function IngestionJobs() {
             </div>
           </CardHeader>
           <CardContent>
+            {selectedProgress && (
+              <div className="mb-6 rounded-lg border border-border bg-muted/20 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="rounded-md uppercase">{selectedProgress.platform}</Badge>
+                      <Badge variant="secondary" className="rounded-md capitalize">{selectedProgress.stage}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">Page {selectedProgress.currentPage || 1}; retrieval cap {selectedProgress.retrievedLimit}; max related target {selectedProgress.maxItemsPerSource}.</p>
+                  </div>
+                  <p className="text-sm font-medium tabular-nums">{selectedProgressPercent}%</p>
+                </div>
+                <div className="mt-4"><Progress value={selectedProgressPercent} /></div>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-sm lg:grid-cols-5">
+                  <div className="rounded-md border border-border bg-card px-3 py-2"><p className="text-xs text-muted-foreground">Retrieved</p><p className="font-semibold tabular-nums">{selectedProgress.retrievedCount}</p></div>
+                  <div className="rounded-md border border-border bg-card px-3 py-2"><p className="text-xs text-muted-foreground">Processed</p><p className="font-semibold tabular-nums">{selectedProgress.processedCount}</p></div>
+                  <div className="rounded-md border border-border bg-card px-3 py-2"><p className="text-xs text-muted-foreground">Accepted</p><p className="font-semibold tabular-nums">{selectedProgress.acceptedCount}</p></div>
+                  <div className="rounded-md border border-border bg-card px-3 py-2"><p className="text-xs text-muted-foreground">Rejected</p><p className="font-semibold tabular-nums">{selectedProgress.rejectedCount}</p></div>
+                  <div className="rounded-md border border-border bg-card px-3 py-2"><p className="text-xs text-muted-foreground">Stored</p><p className="font-semibold tabular-nums">{selectedProgress.storedCount}</p></div>
+                </div>
+                {selectedProgress.batches.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <p className="text-xs font-medium uppercase text-muted-foreground">Batch history</p>
+                    {selectedProgress.batches.map((batch) => (
+                      <div key={batch.page} className="grid gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs sm:grid-cols-6">
+                        <span>Page {batch.page}</span>
+                        <span>Requested {batch.requested}</span>
+                        <span>Retrieved {batch.retrieved}</span>
+                        <span>Accepted {batch.accepted}</span>
+                        <span>Rejected {batch.rejected}</span>
+                        <span>Stored {batch.stored}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <Tabs defaultValue="all" className="gap-4">
               <TabsList className="h-auto flex-wrap justify-start">
                 <TabsTrigger value="all"><Rows3 className="h-4 w-4" /> All ({items.length})</TabsTrigger>
@@ -204,7 +276,7 @@ export default function IngestionJobs() {
                 <TabsTrigger value="errors"><AlertCircle className="h-4 w-4" /> Errors ({errors.length})</TabsTrigger>
               </TabsList>
               <TabsContent value="all">
-                <OutcomeTable items={items} loading={detail.isLoading} emptyText="This run does not have item-level details. New ingestion runs will record inserted and skipped reasons." />
+                <OutcomeTable items={items} loading={detail.isLoading} emptyText="This run does not have item-level details. New collection runs will record inserted and skipped reasons." />
               </TabsContent>
               <TabsContent value="inserted">
                 <OutcomeTable items={groupedItems.inserted} loading={detail.isLoading} emptyText="No inserted items for this run." />

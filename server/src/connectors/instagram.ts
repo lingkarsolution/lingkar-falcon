@@ -1,17 +1,17 @@
-// Instagram Graph API. Owned business/creator accounts only.
+// Instagram connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import type { SourceConnector, CanonicalMentionDraft, IngestionContext, ConnectorHealth } from './types.js';
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleInstagramMentions } from './ensembledata.js';
 
 const testOfficialInstagram = async (): Promise<ConnectorHealth> => {
-  if (!config.instagram.accessToken) return { ok: false, status: 'not_configured', message: 'Set INSTAGRAM_ACCESS_TOKEN or ENSEMBLEDATA_TOKEN' };
+  if (!config.instagram.accessToken) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
   try {
     const r = await fetch(`https://graph.facebook.com/v20.0/me?access_token=${config.instagram.accessToken}`);
-    if (!r.ok) return { ok: false, status: 'failed', message: `IG HTTP ${r.status}` };
-    return { ok: true, status: 'active', message: 'Instagram official Graph API reachable (owned media only)' };
+    if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+    return { ok: true, status: 'active', message: 'Instagram source reachable.' };
   } catch (e) {
-    return { ok: false, status: 'failed', message: (e as Error).message };
+    return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
   }
 };
 
@@ -56,7 +56,7 @@ export const instagramConnector: SourceConnector = {
       const ensemble = await ensembleDataHealth('Instagram');
       if (ensemble.ok || !config.instagram.accessToken) return ensemble;
       const official = await testOfficialInstagram();
-      if (official.ok) return { ...official, message: `${ensemble.message}; official Instagram fallback reachable` };
+      if (official.ok) return { ...official, message: 'Instagram source reachable.' };
       return ensemble;
     }
     return testOfficialInstagram();

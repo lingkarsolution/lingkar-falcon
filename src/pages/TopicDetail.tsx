@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
-import { Fragment, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { SeverityBadge, SentimentBadge, PlatformBadge } from "@/components/ui/badges";
+import { SentimentBadge, PlatformBadge } from "@/components/ui/badges";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -13,13 +13,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Progress } from "@/components/ui/progress";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar, CartesianGrid } from "recharts";
-import { AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronRight, Clock3, ExternalLink, FileText, ImageIcon, Loader2, MapPinned, MessagesSquare, Network, Play, RefreshCw, Send, Sparkles, Shield, UserRound, Video, XCircle } from "lucide-react";
-import { api, type BulkSentimentResult, type IngestionJob, type IngestionJobDetail, type IntelligenceCycleResult, type Topic, type Mention, type Insight, type IssueCluster, type RiskEvent, type Connector, type TopicSentimentStrategy } from "@/lib/api";
+import { AlertTriangle, CheckCircle2, ChevronRight, Clock3, ExternalLink, FileText, ImageIcon, Loader2, MapPinned, MessagesSquare, Network, Pencil, Play, Send, Sparkles, Shield, TrendingDown, TrendingUp, UserRound, Video, XCircle } from "lucide-react";
+import { api, type IngestionJob, type Topic, type Mention, type Insight, type IssueCluster, type Report, type TopicSentimentStrategy } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 import "leaflet/dist/leaflet.css";
 
 interface Timeseries { bucket: string; positive: number; neutral: number; negative: number; mixed: number; total: number }
-interface EntityCount { text: string; type: string; count: number }
 type SentimentKey = "positive" | "neutral" | "negative" | "mixed" | "unknown";
 interface GeoTrend {
   id: string;
@@ -51,27 +50,61 @@ const SENTIMENT_LABELS: Record<SentimentKey, string> = {
   mixed: "Mixed",
   unknown: "Unknown",
 };
-type OperationKind = "ingest" | "cycle" | "sentiment" | "brief" | "risk" | "report";
-type OperationState = { open: boolean; kind: OperationKind; title: string; description: string; progress: number; status: "running" | "completed" | "failed"; logs: string[]; jobId?: string };
+type OperationKind = "report";
+type OperationState = { open: boolean; kind: OperationKind; title: string; description: string; progress: number; status: "running" | "completed" | "failed"; logs: string[] };
+type ReportMutationVars = { reportWindow: Window | null };
 type TopicChatMessage = { role: "user" | "assistant"; content: string; createdAt: string; llmEnabled?: boolean };
 type RawMediaFilter = "all" | "image" | "video" | "other" | "none";
+type OriginClassificationKind = "coordinated" | "mixed" | "genuine" | "unknown";
+type OriginSignal = "genuine" | "review" | "coordinated";
+type OriginSignalFilter = "all" | OriginSignal;
 
 const pct = (value: number, total: number) => total > 0 ? Math.round((value / total) * 100) : 0;
 const sentimentKeys: SentimentKey[] = ["negative", "mixed", "neutral", "positive"];
+const sentimentFilterKeys: SentimentKey[] = ["negative", "mixed", "neutral", "positive", "unknown"];
+const originSignalOrder: OriginSignal[] = ["coordinated", "review", "genuine"];
+const originSignalLabels: Record<OriginSignal, string> = { coordinated: "Coordinated signal", review: "Needs review", genuine: "Likely genuine" };
 const mappableTrends = <T extends { latitude?: number | null; longitude?: number | null }>(trends: T[]) => trends.filter((trend) => Number.isFinite(trend.latitude) && Number.isFinite(trend.longitude));
 const dominantSentiment = (trend: GeoTrend): SentimentKey => {
   const entries = Object.entries(trend.sentimentBreakdown ?? {}) as Array<[SentimentKey, number]>;
   return entries.sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
 };
-const jobProgress = (job?: IngestionJob): number => {
-  if (!job) return 12;
-  if (job.status === "completed") return 100;
-  if (job.status === "failed" || job.status === "cancelled") return 100;
-  if (job.status === "running") return 65;
-  return 24;
-};
 const mentionTimestamp = (mention: Mention): number => new Date(mention.publishedAt ?? mention.collectedAt).getTime();
 const formatCompact = (value?: number | null): string => typeof value === "number" && Number.isFinite(value) ? Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value) : "-";
+const formatWholeNumber = (value: number): string => Intl.NumberFormat().format(value);
+const numberOrZero = (value?: number | null): number => typeof value === "number" && Number.isFinite(value) ? value : 0;
+const jobStatusVariant = (status: IngestionJob["status"]): ComponentProps<typeof Badge>["variant"] => {
+  if (status === "completed") return "default";
+  if (status === "failed" || status === "cancelled") return "destructive";
+  return "secondary";
+};
+const jobPlatform = (job: IngestionJob): string => {
+  const progress = job.metadata?.ingestionProgress as { platform?: unknown } | undefined;
+  return typeof progress?.platform === "string" && progress.platform ? progress.platform : "Unknown";
+};
+const jobStoredCount = (job: IngestionJob): number => {
+  const progress = job.metadata?.ingestionProgress as { storedCount?: unknown } | undefined;
+  return typeof progress?.storedCount === "number" ? progress.storedCount : numberOrZero(job.insertedCount ?? job.itemsStored);
+};
+const comparisonMeta = (current: number, previous: number): { text: string; direction: "up" | "down" | "flat" } => {
+  if (previous === 0 && current === 0) return { text: "No change from last week", direction: "flat" };
+  if (previous === 0) return { text: "New from last week", direction: "up" };
+  const change = ((current - previous) / previous) * 100;
+  if (Math.abs(change) < 0.1) return { text: "No change from last week", direction: "flat" };
+  const sign = change > 0 ? "+" : "-";
+  return { text: `${sign}${Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(Math.abs(change))}% from last week`, direction: change > 0 ? "up" : "down" };
+};
+const formatSpreadMinutes = (minutes: number): string => {
+  if (!Number.isFinite(minutes)) return "Unknown duration";
+  if (minutes < 1) return "Under 1 minute";
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days} ${days === 1 ? "day" : "days"}`;
+};
 const mentionEngagement = (mention: Mention): number => mention.metrics?.engagementTotal
   ?? (mention.metrics?.likeCount ?? mention.metrics?.likes ?? 0)
   + (mention.metrics?.shareCount ?? mention.metrics?.shares ?? mention.metrics?.reposts ?? 0)
@@ -85,142 +118,98 @@ const originAssessment = (mention: Mention, repeatedTextCount: number): { label:
   if (automation >= 0.3 || repeatedTextCount === 2) return { label: "Needs review", tone: "secondary", note: "Some automation or copy reuse signals are present." };
   return { label: "Likely genuine", tone: "default", note: "Low automation and no strong copy reuse in the first wave." };
 };
+const originSignalKey = (assessment: ReturnType<typeof originAssessment>): OriginSignal => {
+  if (assessment.tone === "destructive") return "coordinated";
+  if (assessment.tone === "secondary") return "review";
+  return "genuine";
+};
 const originRowTone = (tone: "default" | "secondary" | "destructive") => {
   if (tone === "destructive") return "border-l-destructive bg-destructive/8 hover:bg-destructive/12";
   if (tone === "secondary") return "border-l-amber-500 bg-amber-500/10 hover:bg-amber-500/15";
   return "border-l-emerald-500 bg-emerald-500/8 hover:bg-emerald-500/12";
 };
-
-function OperationButton({ tooltip, loading, loadingLabel, children, ...props }: ComponentProps<typeof Button> & { tooltip: string; loading?: boolean; loadingLabel: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">
-          <Button {...props} disabled={props.disabled || loading}>
-            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            {loading ? loadingLabel : children}
-          </Button>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-64">{tooltip}</TooltipContent>
-    </Tooltip>
-  );
-}
+const originBannerTone = (kind: OriginClassificationKind): string => {
+  if (kind === "coordinated") return "border-red-200 bg-red-50 text-red-950 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-100";
+  if (kind === "mixed") return "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100";
+  if (kind === "genuine") return "border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-100";
+  return "border-border bg-muted/40 text-foreground";
+};
+const originBadgeVariant = (kind: OriginClassificationKind): ComponentProps<typeof Badge>["variant"] => {
+  if (kind === "coordinated") return "destructive";
+  if (kind === "mixed") return "secondary";
+  return "default";
+};
 
 export default function TopicDetail() {
   const { id = "" } = useParams<{ id: string }>();
   const qc = useQueryClient();
 
   const topic = useQuery({ queryKey: qk.topic(id), queryFn: () => api.get<Topic>(`/topics/${id}`) });
-  const timeseries = useQuery({ queryKey: qk.timeseries(id, "day", 14), queryFn: () => api.get<Timeseries[]>(`/analytics/topics/${id}/timeseries?bucket=day&days=14`) });
-  const sentiment = useQuery({ queryKey: qk.sentiment(id), queryFn: () => api.get<Record<string, number>>(`/analytics/topics/${id}/sentiment`) });
-  const entities = useQuery({ queryKey: qk.entities(id), queryFn: () => api.get<EntityCount[]>(`/analytics/topics/${id}/entities`) });
-  const insights = useQuery({ queryKey: qk.insights(id), queryFn: () => api.get<Insight[]>(`/ai/topics/${id}/insights`) });
-  const sentimentStrategy = useQuery({ queryKey: ["topic-sentiment-strategy", id], queryFn: () => api.get<TopicSentimentStrategy | null>(`/ai/topics/${id}/sentiment-strategy`) });
-  const clusters = useQuery({ queryKey: qk.clusters(id), queryFn: () => api.get<IssueCluster[]>(`/ai/topics/${id}/clusters`) });
-  const riskEvents = useQuery({ queryKey: qk.riskEvents(id), queryFn: () => api.get<RiskEvent[]>(`/ai/topics/${id}/risk-events`) });
+  const evidenceProbe = useQuery({ queryKey: ["mentions-topic-probe", id], queryFn: () => api.get<{ items: Mention[] }>(`/mentions?topicId=${id}&limit=1`), enabled: Boolean(id) });
+  const hasEvidence = (evidenceProbe.data?.items.length ?? 0) > 0;
+  const evidenceQueriesEnabled = evidenceProbe.isError || (evidenceProbe.isSuccess && hasEvidence);
+  const timeseries = useQuery({ queryKey: qk.timeseries(id, "day", 14), queryFn: () => api.get<Timeseries[]>(`/analytics/topics/${id}/timeseries?bucket=day&days=14`), enabled: evidenceQueriesEnabled });
+  const sentiment = useQuery({ queryKey: qk.sentiment(id), queryFn: () => api.get<Record<string, number>>(`/analytics/topics/${id}/sentiment`), enabled: evidenceQueriesEnabled });
+  const insights = useQuery({ queryKey: qk.insights(id), queryFn: () => api.get<Insight[]>(`/ai/topics/${id}/insights`), enabled: evidenceQueriesEnabled });
+  const sentimentStrategy = useQuery({ queryKey: ["topic-sentiment-strategy", id], queryFn: () => api.get<TopicSentimentStrategy | null>(`/ai/topics/${id}/sentiment-strategy`), enabled: evidenceQueriesEnabled });
+  const clusters = useQuery({ queryKey: qk.clusters(id), queryFn: () => api.get<IssueCluster[]>(`/ai/topics/${id}/clusters`), enabled: evidenceQueriesEnabled });
+  const collectionJobs = useQuery({ queryKey: [...qk.ingestionJobs, "topic", id], queryFn: () => api.get<IngestionJob[]>("/ingestion/jobs"), enabled: Boolean(id) });
   const [rawMediaType, setRawMediaType] = useState<RawMediaFilter>("all");
   const [rawSource, setRawSource] = useState("all");
   const mentions = useQuery({
     queryKey: ["mentions-topic", id, rawMediaType, rawSource],
     queryFn: () => {
-      const params = new URLSearchParams({ topicId: id, limit: "50" });
+      const params = new URLSearchParams({ topicId: id, limit: "1000" });
       if (rawMediaType !== "all") params.set("mediaType", rawMediaType);
       if (rawSource !== "all") params.set("platform", rawSource);
       return api.get<{ items: Mention[] }>(`/mentions?${params.toString()}`);
     },
+    enabled: evidenceQueriesEnabled,
   });
-  const originMentions = useQuery({ queryKey: ["mentions-topic-origins", id], queryFn: () => api.get<{ items: Mention[] }>(`/mentions?topicId=${id}&limit=20&sort=oldest`) });
-  const connectors = useQuery({ queryKey: qk.connectors, queryFn: () => api.get<Connector[]>("/connectors") });
-  const geoTrends = useQuery({ queryKey: qk.geoTrends(id), queryFn: () => api.get<GeoTrend[]>(`/analytics/topics/${id}/geo-trends?limit=20`) });
+  const originMentions = useQuery({ queryKey: ["mentions-topic-origins", id], queryFn: () => api.get<{ items: Mention[] }>(`/mentions?topicId=${id}&limit=500&sort=oldest&perPlatformLimit=20`), enabled: evidenceQueriesEnabled });
+  const geoTrends = useQuery({ queryKey: qk.geoTrends(id), queryFn: () => api.get<GeoTrend[]>(`/analytics/topics/${id}/geo-trends?limit=20`), enabled: evidenceQueriesEnabled });
 
-  const [connectorId, setConnectorId] = useState<string>("");
-  const [historyDays, setHistoryDays] = useState("30");
   const [operation, setOperation] = useState<OperationState | null>(null);
-  const [expandedOriginIds, setExpandedOriginIds] = useState<Set<string>>(() => new Set());
+  const [originPanelOpen, setOriginPanelOpen] = useState(false);
+  const [originSourceFilter, setOriginSourceFilter] = useState("all");
+  const [originSentimentFilter, setOriginSentimentFilter] = useState<"all" | SentimentKey>("all");
+  const [originSignalFilter, setOriginSignalFilter] = useState<OriginSignalFilter>("all");
   const [topicChatInput, setTopicChatInput] = useState("");
   const [topicChatMessages, setTopicChatMessages] = useState<TopicChatMessage[]>([]);
-
-  const activeJobId = operation?.jobId;
-  const jobDetail = useQuery({
-    queryKey: ["ingestion-job-detail", activeJobId],
-    queryFn: () => api.get<IngestionJobDetail>(`/ingestion/jobs/${activeJobId}`),
-    enabled: Boolean(activeJobId && operation?.open && operation.status === "running"),
-    refetchInterval: (query) => {
-      const status = query.state.data?.job.status;
-      return status === "completed" || status === "failed" || status === "cancelled" ? false : 1200;
-    },
-  });
 
   const openOperation = (next: Omit<OperationState, "open" | "status" | "progress" | "logs"> & { logs?: string[] }) => {
     setOperation({ open: true, status: "running", progress: 10, logs: next.logs ?? [`Started ${next.title.toLowerCase()}.`], ...next });
   };
   const finishOperation = (patch: Partial<OperationState>) => {
-    setOperation((current) => current ? { ...current, status: patch.status ?? "completed", progress: patch.progress ?? 100, logs: [...current.logs, ...(patch.logs ?? [])], jobId: patch.jobId ?? current.jobId } : current);
+    setOperation((current) => current ? { ...current, status: patch.status ?? "completed", progress: patch.progress ?? 100, logs: [...current.logs, ...(patch.logs ?? [])] } : current);
   };
-
-  const trigger = useMutation({
-    mutationFn: () => api.post("/ingestion/trigger", { topicId: id, connectorId, maxItems: 50, days: Number(historyDays) }),
-    onMutate: () => openOperation({ kind: "ingest", title: "Ingestion", description: "Fetching public evidence for this topic.", logs: [`Queued ${historyDays}-day ingestion window.`] }),
-    onSuccess: (job) => {
-      const createdJob = job as IngestionJob;
-      finishOperation({ status: "running", progress: 24, jobId: createdJob.id, logs: [`Job ${createdJob.id} queued.`, "Watching connector progress."] });
-      setTimeout(() => qc.invalidateQueries(), 1500);
-    },
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
-  });
-  const cycle = useMutation({
-    mutationFn: () => api.post<IntelligenceCycleResult>(`/topics/${id}/intelligence-cycle`, { days: Number(historyDays), maxItemsPerConnector: 50, includeTrendingNews: true }),
-    onMutate: () => openOperation({ kind: "cycle", title: "Intelligence cycle", description: "Running ingestion, LLM sentiment, clustering, risk detection, and daily brief.", logs: ["Preparing OSINT connectors.", "Running the cycle on the server."] }),
-    onSuccess: (result) => {
-      finishOperation({ logs: [
-        `Completed ${result.jobs.length} ingestion jobs.`,
-        `LLM sentiment updated ${result.sentiment.updated} mentions.`,
-        `Created ${result.clusters.length} clusters and ${result.risks.length} risk events.`,
-        result.brief ? "Generated daily brief." : "Daily brief skipped because no evidence was available.",
-      ] });
-      qc.invalidateQueries();
-    },
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
-  });
-  const analyzeSentiment = useMutation({
-    mutationFn: () => api.post<BulkSentimentResult>("/ai/analyze-sentiment", { topicId: id, limit: 200 }),
-    onMutate: () => openOperation({ kind: "sentiment", title: "LLM sentiment", description: "Classifying saved mentions by narrative risk tone.", logs: ["Sending recent mentions for bulk analysis."] }),
-    onSuccess: (result) => {
-      finishOperation({ logs: [`Requested ${result.requested} mentions.`, `Updated ${result.updated}; failed ${result.failed}; skipped ${result.skipped}.`, ...result.errors] });
-      qc.invalidateQueries();
-    },
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
-  });
-  const brief = useMutation({
-    mutationFn: () => api.post<Insight>("/ai/daily-brief", { topicId: id }),
-    onMutate: () => openOperation({ kind: "brief", title: "Daily brief", description: "Generating an evidence-backed analyst summary.", logs: ["Collecting latest mentions and evidence IDs."] }),
-    onSuccess: (result) => {
-      finishOperation({ logs: [result ? "Generated daily brief." : "No brief generated because no evidence was available."] });
-      qc.invalidateQueries({ queryKey: qk.insights(id) });
-    },
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
-  });
-  const cluster = useMutation({
-    mutationFn: () => api.post<IssueCluster[]>("/ai/cluster", { topicId: id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.clusters(id) }),
-  });
-  const detectRisk = useMutation({
-    mutationFn: () => api.post<RiskEvent[]>("/ai/detect-risk", { topicId: id }),
-    onMutate: () => openOperation({ kind: "risk", title: "Risk detection", description: "Clustering narratives and scoring risk events.", logs: ["Refreshing clusters before scoring risk."] }),
-    onSuccess: (events) => {
-      finishOperation({ logs: [`Detected ${events.length} risk events.`] });
-      qc.invalidateQueries({ queryKey: qk.riskEvents(id) });
-      qc.invalidateQueries({ queryKey: qk.clusters(id) });
-    },
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
-  });
   const genReport = useMutation({
-    mutationFn: () => api.post("/reports", { topicId: id }),
-    onMutate: () => openOperation({ kind: "report", title: "Report", description: "Queuing a report from current topic evidence.", logs: ["Creating report job."] }),
-    onSuccess: () => finishOperation({ logs: ["Report job queued."] }),
-    onError: (error) => finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] }),
+    mutationFn: (_variables: ReportMutationVars) => api.post<Report>("/reports", { topicId: id }),
+    onMutate: () => openOperation({ kind: "report", title: "Report", description: "Queuing a report from current topic posts.", logs: ["Creating report job."] }),
+    onSuccess: (report, variables) => {
+      const reportUrl = report.fileUrl ?? `/api/v1/reports/${report.id}/download`;
+      finishOperation({ logs: ["Report generated.", "Opening report in a new tab."] });
+      qc.invalidateQueries({ queryKey: qk.reports });
+      if (variables.reportWindow && !variables.reportWindow.closed) {
+        variables.reportWindow.opener = null;
+        variables.reportWindow.location.href = reportUrl;
+      } else {
+        window.open(reportUrl, "_blank", "noopener,noreferrer");
+      }
+    },
+    onError: (error, variables) => {
+      variables.reportWindow?.close();
+      finishOperation({ status: "failed", progress: 100, logs: [(error as Error).message] });
+    },
   });
+  const handleGenerateReport = () => {
+    const reportWindow = window.open("about:blank", "_blank");
+    if (reportWindow) {
+      reportWindow.document.title = "Generating report...";
+      reportWindow.document.body.innerHTML = '<p style="font-family: system-ui, sans-serif; padding: 24px; color: #52525b;">Generating report...</p>';
+    }
+    genReport.mutate({ reportWindow });
+  };
   const generateStrategy = useMutation({
     mutationFn: () => api.post<TopicSentimentStrategy>(`/ai/topics/${id}/sentiment-strategy`),
     onSuccess: () => {
@@ -242,9 +231,65 @@ export default function TopicDetail() {
   });
 
   const sentEntries = Object.entries(sentiment.data ?? {}).map(([name, value]) => ({ name, value }));
-  const enabledConnectors = (connectors.data ?? []).filter((c) => c.enabled && (c.status === "active" || c.status === "limited"));
   const mentionItems = mentions.data?.items ?? [];
+  const topicCollectionJobs = useMemo(() => (collectionJobs.data ?? []).filter((job) => job.topicId === id), [collectionJobs.data, id]);
   const originItems = originMentions.data?.items ?? [];
+  const originTextCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const mention of originItems) {
+      const normalized = normalizeMentionText(mention.text);
+      if (normalized) counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+    }
+    return counts;
+  }, [originItems]);
+  const originSourceOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const mention of originItems) counts.set(mention.platform, (counts.get(mention.platform) ?? 0) + 1);
+    return [...counts.entries()]
+      .filter(([platform, count]) => Boolean(platform) && count > 0)
+      .sort(([platformA], [platformB]) => platformA.localeCompare(platformB))
+      .map(([platform, count]) => ({ platform, count }));
+  }, [originItems]);
+  const originSentimentOptions = useMemo(() => {
+    const counts = new Map<SentimentKey, number>();
+    for (const mention of originItems) counts.set(mention.nlp.sentiment, (counts.get(mention.nlp.sentiment) ?? 0) + 1);
+    return sentimentFilterKeys
+      .map((sentiment) => ({ sentiment, count: counts.get(sentiment) ?? 0 }))
+      .filter((option) => option.count > 0);
+  }, [originItems]);
+  const originSignalOptions = useMemo(() => {
+    const counts = new Map<OriginSignal, number>();
+    for (const mention of originItems) {
+      const repeatCount = originTextCounts.get(normalizeMentionText(mention.text)) ?? 0;
+      const signal = originSignalKey(originAssessment(mention, repeatCount));
+      counts.set(signal, (counts.get(signal) ?? 0) + 1);
+    }
+    return originSignalOrder
+      .map((signal) => ({ signal, count: counts.get(signal) ?? 0 }));
+  }, [originItems, originTextCounts]);
+  const visibleOriginItems = useMemo(() => {
+    return originItems.filter((mention) => {
+      if (originSourceFilter !== "all" && mention.platform !== originSourceFilter) return false;
+      if (originSentimentFilter !== "all" && mention.nlp.sentiment !== originSentimentFilter) return false;
+      if (originSignalFilter !== "all") {
+        const repeatCount = originTextCounts.get(normalizeMentionText(mention.text)) ?? 0;
+        const signal = originSignalKey(originAssessment(mention, repeatCount));
+        if (signal !== originSignalFilter) return false;
+      }
+      return true;
+    });
+  }, [originItems, originSentimentFilter, originSignalFilter, originSourceFilter, originTextCounts]);
+  useEffect(() => {
+    if (originSourceFilter !== "all" && !originSourceOptions.some((source) => source.platform === originSourceFilter)) {
+      setOriginSourceFilter("all");
+    }
+    if (originSentimentFilter !== "all" && !originSentimentOptions.some((sentiment) => sentiment.sentiment === originSentimentFilter)) {
+      setOriginSentimentFilter("all");
+    }
+    if (originSignalFilter !== "all" && !originSignalOptions.some((signal) => signal.signal === originSignalFilter)) {
+      setOriginSignalFilter("all");
+    }
+  }, [originSentimentFilter, originSentimentOptions, originSignalFilter, originSignalOptions, originSourceFilter, originSourceOptions]);
   const strategy = sentimentStrategy.data;
   const cityRows = useMemo(() => (geoTrends.data ?? [])
     .map((trend) => {
@@ -266,24 +311,40 @@ export default function TopicDetail() {
   const leadCityPie = leadCity
     ? sentimentKeys.map((key) => ({ name: SENTIMENT_LABELS[key], value: leadCity.sentimentBreakdown[key] ?? 0 })).filter((item) => item.value > 0)
     : [];
-  const rawSentimentRows = useMemo(() => sentimentKeys
-    .map((key) => ({ name: SENTIMENT_LABELS[key], value: mentionItems.filter((mention) => mention.nlp.sentiment === key).length, key }))
-    .filter((item) => item.value > 0), [mentionItems]);
-  const rawPlatformRows = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const mention of mentionItems) counts.set(mention.platform, (counts.get(mention.platform) ?? 0) + 1);
-    return [...counts.entries()]
-      .map(([platform, count]) => ({ platform, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
+  const evidenceSummaryCards = useMemo(() => {
+    const sortedTimes = mentionItems.map(mentionTimestamp).filter(Number.isFinite);
+    const latestTime = sortedTimes.length > 0 ? Math.max(...sortedTimes) : Date.now();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const currentStart = latestTime - weekMs;
+    const previousStart = latestTime - (weekMs * 2);
+    const inWindow = (mention: Mention, start: number, end: number) => {
+      const timestamp = mentionTimestamp(mention);
+      return Number.isFinite(timestamp) && timestamp > start && timestamp <= end;
+    };
+    const current = mentionItems.filter((mention) => inWindow(mention, currentStart, latestTime));
+    const previous = mentionItems.filter((mention) => inWindow(mention, previousStart, currentStart));
+    const riskToned = (items: Mention[]) => items.filter((mention) => mention.nlp.sentiment === "negative" || mention.nlp.sentiment === "mixed").length;
+    const linked = (items: Mention[]) => items.filter((mention) => Boolean(mention.sourceUrl)).length;
+    const engagement = (items: Mention[]) => items.reduce((total, mention) => total + mentionEngagement(mention), 0);
+    const rows = [
+      { label: "Posts collected", current: current.length, previous: previous.length, format: formatWholeNumber, accent: "bg-sky-500" },
+      { label: "Risk-toned items", current: riskToned(current), previous: riskToned(previous), format: formatWholeNumber, accent: "bg-amber-500" },
+      { label: "Total engagement", current: engagement(current), previous: engagement(previous), format: formatCompact, accent: "bg-emerald-500" },
+      { label: "Source-linked items", current: linked(current), previous: linked(previous), format: formatWholeNumber, accent: "bg-violet-500" },
+    ];
+    return rows.map((row) => ({
+      ...row,
+      value: row.format(row.current),
+      previousValue: row.format(row.previous),
+      comparison: comparisonMeta(row.current, row.previous),
+    }));
   }, [mentionItems]);
   const rawSourceOptions = useMemo(() => {
     const values = new Set<string>();
     for (const platform of topic.data?.platforms ?? []) values.add(platform);
-    for (const connector of connectors.data ?? []) values.add(connector.platform);
     for (const mention of mentionItems) values.add(mention.platform);
     return [...values].filter(Boolean).sort();
-  }, [connectors.data, mentionItems, topic.data?.platforms]);
+  }, [mentionItems, topic.data?.platforms]);
   const issueRows = useMemo(() => (clusters.data ?? []).map((cluster) => {
     const mentionCount = cluster.mentionCount ?? cluster.size ?? cluster.sampleMentionIds?.length ?? cluster.representativeMentionIds?.length ?? 0;
     const breakdown = cluster.sentimentBreakdown ?? {
@@ -311,24 +372,16 @@ export default function TopicDetail() {
   const evidenceReadiness = useMemo(() => {
     const total = mentionItems.length;
     const sourceLinked = mentionItems.filter((m) => Boolean(m.sourceUrl)).length;
-    const llmReviewed = mentionItems.filter((m) => m.nlp.sentimentSource === "llm").length;
+    const aiReviewed = mentionItems.filter((m) => m.nlp.sentimentSource === "llm").length;
     const highRelevance = mentionItems.filter((m) => (m.quality?.relevanceScore ?? 0) >= 0.65).length;
     const riskToned = mentionItems.filter((m) => m.nlp.sentiment === "negative" || m.nlp.sentiment === "mixed").length;
     return [
-      { label: "Source-linked evidence", value: sourceLinked, total, percent: pct(sourceLinked, total) },
-      { label: "LLM-reviewed sentiment", value: llmReviewed, total, percent: pct(llmReviewed, total) },
+      { label: "Source-linked posts", value: sourceLinked, total, percent: pct(sourceLinked, total) },
+      { label: "AI-reviewed sentiment", value: aiReviewed, total, percent: pct(aiReviewed, total) },
       { label: "High relevance", value: highRelevance, total, percent: pct(highRelevance, total) },
       { label: "Risk-toned mentions", value: riskToned, total, percent: pct(riskToned, total) },
     ];
   }, [mentionItems]);
-  const originTextCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const mention of originItems) {
-      const normalized = normalizeMentionText(mention.text);
-      if (normalized) counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
-    }
-    return counts;
-  }, [originItems]);
   const originStats = useMemo(() => {
     const uniqueProfiles = new Set(originItems.map((mention) => `${mention.platform}:${mention.author?.username ?? mention.author?.displayName ?? mention.id}`)).size;
     const highAutomation = originItems.filter((mention) => (mention.quality?.automationLikelihood ?? 0) >= 0.55).length;
@@ -339,14 +392,46 @@ export default function TopicDetail() {
     const coordinationScore = originItems.length > 0 ? Math.min(100, Math.round(((highAutomation / originItems.length) * 55) + ((repeatedCopy / originItems.length) * 35) + (spreadMinutes <= 30 && originItems.length >= 8 ? 10 : 0))) : 0;
     return { uniqueProfiles, highAutomation, repeatedCopy, first, last, spreadMinutes, coordinationScore };
   }, [originItems, originTextCounts]);
-  const toggleOriginRow = (mentionId: string) => {
-    setExpandedOriginIds((current) => {
-      const next = new Set(current);
-      if (next.has(mentionId)) next.delete(mentionId);
-      else next.add(mentionId);
-      return next;
-    });
-  };
+  const originClassification = useMemo(() => {
+    const total = originItems.length;
+    const fastSpread = originStats.spreadMinutes <= 30 && total >= 8;
+    const reasonParts = [
+      `${originStats.coordinationScore}% coordination score`,
+      `${originStats.highAutomation}/${total} high-automation early posts`,
+      `${originStats.repeatedCopy}/${total} posts with similar copy`,
+      total > 1 ? `first wave spread across ${formatSpreadMinutes(originStats.spreadMinutes)}` : "only one origin post available",
+    ];
+    if (total === 0) {
+      return {
+        kind: "unknown" as OriginClassificationKind,
+        title: "Origin signal unavailable",
+        label: "No posts",
+        reason: "No origin posts are stored yet. Run collection to gather the earliest posts for this topic.",
+      };
+    }
+    if (originStats.coordinationScore >= 60 || originStats.highAutomation >= Math.max(2, Math.ceil(total * 0.35))) {
+      return {
+        kind: "coordinated" as OriginClassificationKind,
+        title: "Likely coordinated event",
+        label: "Coordinated",
+        reason: `This looks coordinated because ${reasonParts.join(", ")}${fastSpread ? ", including a fast first-wave spread" : ""}.`,
+      };
+    }
+    if (originStats.coordinationScore >= 30 || originStats.highAutomation > 0 || originStats.repeatedCopy > 0 || fastSpread) {
+      return {
+        kind: "mixed" as OriginClassificationKind,
+        title: "Mixed origin signal",
+        label: "Mixed",
+        reason: `This has both organic and coordinated-looking signals: ${reasonParts.join(", ")}. Review the earliest profiles before treating it as fully genuine or coordinated.`,
+      };
+    }
+    return {
+      kind: "genuine" as OriginClassificationKind,
+      title: "Likely genuine issue",
+      label: "Genuine",
+      reason: `This looks more organic because ${reasonParts.join(", ")}, with low automation and no strong repeated-copy pattern in the first wave.`,
+    };
+  }, [originItems.length, originStats]);
   const askTopicAi = (message = topicChatInput.trim()) => {
     const trimmed = message.trim();
     if (!trimmed || topicChat.isPending) return;
@@ -356,89 +441,75 @@ export default function TopicDetail() {
     topicChat.mutate({ message: trimmed, history });
   };
 
-  useEffect(() => {
-    if (!operation?.jobId || !jobDetail.data?.job) return;
-    const job = jobDetail.data.job;
-    const errors = jobDetail.data.errors ?? [];
-    setOperation((current) => {
-      if (!current || current.jobId !== job.id) return current;
-      const terminal = job.status === "completed" || job.status === "failed" || job.status === "cancelled";
-      return {
-        ...current,
-        status: job.status === "failed" || job.status === "cancelled" ? "failed" : terminal ? "completed" : "running",
-        progress: jobProgress(job),
-        logs: [
-          ...current.logs,
-          `Status: ${job.status}; fetched ${job.fetchedCount ?? 0}, inserted ${job.insertedCount ?? 0}, skipped ${job.skippedCount ?? 0}.`,
-          ...errors.map((error) => `Error: ${error.message}`),
-        ].slice(-12),
-      };
-    });
-    if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") qc.invalidateQueries();
-  }, [jobDetail.data, operation?.jobId, qc]);
-
-  useEffect(() => {
-    if (!connectorId && enabledConnectors.length > 0) setConnectorId(enabledConnectors[0].id);
-  }, [connectorId, enabledConnectors]);
-
   if (topic.isLoading) return <div className="p-8 text-muted-foreground">Loading…</div>;
   if (!topic.data) return <div className="p-8 text-destructive">Topic not found.</div>;
+
+  if (evidenceProbe.isLoading) return <div className="p-8 text-muted-foreground">Checking topic posts…</div>;
 
   return (
     <TooltipProvider>
     <div className="p-6 lg:p-8 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">{topic.data.title}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-semibold tracking-tight">{topic.data.title}</h1>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button asChild variant="outline" size="icon" className="h-8 w-8">
+                  <Link to={`/topics/form/${topic.data.id}`} aria-label="Update topic">
+                    <Pencil className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Update topic</TooltipContent>
+            </Tooltip>
+          </div>
           <p className="text-muted-foreground mt-1">{topic.data.description ?? "No description"}</p>
           <div className="flex flex-wrap gap-1 mt-3">
             {topic.data.keywords.map((k) => <Badge key={k} variant="outline" className="font-mono text-[10px]">{k}</Badge>)}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Select value={connectorId} onValueChange={setConnectorId}>
-            <SelectTrigger className="w-[200px]"><SelectValue placeholder="Choose connector" /></SelectTrigger>
-            <SelectContent>{enabledConnectors.map((c) => <SelectItem key={c.id} value={c.id}>{c.displayName ?? c.name ?? c.platform}</SelectItem>)}</SelectContent>
-          </Select>
-          <Select value={historyDays} onValueChange={setHistoryDays}>
-            <SelectTrigger className="w-[116px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[7, 14, 30, 60, 90].map((days) => <SelectItem key={days} value={String(days)}>{days} days</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <OperationButton tooltip="Fetch new evidence through the selected connector and save the ingestion job." loading={trigger.isPending} loadingLabel="Ingesting…" onClick={() => trigger.mutate()} disabled={!connectorId}>
-            <Play className="h-4 w-4 mr-2" /> Ingest
-          </OperationButton>
-          <OperationButton tooltip="Run ingestion, LLM sentiment, clustering, risk detection, and daily brief in sequence." loading={cycle.isPending} loadingLabel="Running…" variant="secondary" onClick={() => cycle.mutate()}>
-            <RefreshCw className="h-4 w-4 mr-2" /> Run cycle
-          </OperationButton>
-          <OperationButton tooltip="Re-score saved mentions with the LLM using narrative risk tone." loading={analyzeSentiment.isPending} loadingLabel="Analyzing…" variant="outline" onClick={() => analyzeSentiment.mutate()}>
-            <Brain className="h-4 w-4 mr-2" /> LLM sentiment
-          </OperationButton>
-          <OperationButton tooltip="Generate an evidence-backed daily brief from the latest mentions." loading={brief.isPending} loadingLabel="Generating…" variant="secondary" onClick={() => brief.mutate()}>
-            <Sparkles className="h-4 w-4 mr-2" /> Daily brief
-          </OperationButton>
-          <OperationButton tooltip="Refresh narrative clusters and produce risk events when thresholds are crossed." loading={detectRisk.isPending || cluster.isPending} loadingLabel="Detecting…" variant="secondary" onClick={() => detectRisk.mutate()}>
-            <Shield className="h-4 w-4 mr-2" /> Detect risk
-          </OperationButton>
-          <OperationButton tooltip="Create a report from the current topic evidence and analysis." loading={genReport.isPending} loadingLabel="Queuing…" variant="outline" onClick={() => genReport.mutate()}>
-            <FileText className="h-4 w-4 mr-2" /> Report
-          </OperationButton>
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          <Button asChild>
+            <Link to={`/ingestions/form?_tid=${topic.data.id}`}><Play className="h-4 w-4" /> Collect Posts</Link>
+          </Button>
+          <Button type="button" variant="secondary" onClick={handleGenerateReport} disabled={genReport.isPending}>
+            {genReport.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            Report
+          </Button>
         </div>
       </div>
 
       <Tabs defaultValue="overview">
         <TabsList className="flex h-auto flex-wrap justify-start">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="origins">Origins</TabsTrigger>
-          <TabsTrigger value="raw">Raw Data</TabsTrigger>
-          <TabsTrigger value="insights">Insights</TabsTrigger>
+          <TabsTrigger value="raw">Recent Posts</TabsTrigger>
+          <TabsTrigger value="insights">AI Insights</TabsTrigger>
           <TabsTrigger value="issues">Issues</TabsTrigger>
-          <TabsTrigger value="risk">Risk Events</TabsTrigger>
-          <TabsTrigger value="entities">Entities</TabsTrigger>
+          <TabsTrigger value="jobs">Collect Job History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
+          <div className={`mb-6 rounded-lg border p-4 ${originBannerTone(originClassification.kind)}`}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 rounded-md bg-background/70 p-2 text-current shadow-xs">
+                  {originClassification.kind === "genuine" ? <CheckCircle2 className="h-5 w-5" /> : originClassification.kind === "coordinated" ? <AlertTriangle className="h-5 w-5" /> : <Network className="h-5 w-5" />}
+                </div>
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold">{originClassification.title}</p>
+                    <Badge variant={originBadgeVariant(originClassification.kind)} className="rounded-md">{originClassification.label}</Badge>
+                    <Badge variant="outline" className="rounded-md bg-background/70">Score {originStats.coordinationScore}%</Badge>
+                  </div>
+                  <p className="max-w-4xl text-sm leading-6 opacity-90">{originClassification.reason}</p>
+                </div>
+              </div>
+              <Button type="button" variant="outline" className="bg-background/80" onClick={() => setOriginPanelOpen(true)}>
+                <Network className="h-4 w-4 mr-2" /> See details
+              </Button>
+            </div>
+          </div>
           <div className="grid gap-6 xl:grid-cols-[minmax(0,7fr)_minmax(320px,3fr)]">
           <div className="space-y-6">
           <Card>
@@ -591,7 +662,7 @@ export default function TopicDetail() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
-              <CardHeader><CardTitle className="text-base">Evidence readiness</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">Post readiness</CardTitle></CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="rounded-md border border-border px-3 py-2">
@@ -599,7 +670,7 @@ export default function TopicDetail() {
                     <p className="text-2xl font-semibold tabular-nums">{mentionItems.length}</p>
                   </div>
                   <div className="rounded-md border border-border px-3 py-2">
-                    <p className="text-muted-foreground text-xs">Latest evidence</p>
+                    <p className="text-muted-foreground text-xs">Latest post</p>
                     <p className="text-sm font-medium truncate">{mentionItems[0] ? new Date(mentionItems[0].publishedAt ?? mentionItems[0].collectedAt).toLocaleDateString() : "None"}</p>
                   </div>
                 </div>
@@ -637,7 +708,7 @@ export default function TopicDetail() {
               <CardHeader className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base">AI sentiment strategy</CardTitle>
+                    <CardTitle className="text-base">AI Summary</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">Summarizes negative concerns, positive drivers, and a PR response from saved posts.</p>
                   </div>
                   <Button size="sm" onClick={() => generateStrategy.mutate()} disabled={generateStrategy.isPending || mentionItems.length === 0}>
@@ -646,13 +717,13 @@ export default function TopicDetail() {
                   </Button>
                 </div>
                 {strategy && (
-                  <p className="text-xs text-muted-foreground">Analyzed {strategy.mentionsAnalyzed} posts · {new Date(strategy.generatedAt).toLocaleString()} · {strategy.llmEnabled ? "LLM" : "Heuristic fallback"}</p>
+                  <p className="text-xs text-muted-foreground">Analyzed {strategy.mentionsAnalyzed} posts · {new Date(strategy.generatedAt).toLocaleString()} · {strategy.llmEnabled ? "AI-assisted" : "Rules-based"}</p>
                 )}
               </CardHeader>
               <CardContent className="space-y-4">
                 {!strategy && (
                   <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
-                    Generate the summary after ingestion or sentiment analysis. It is cached here so page refreshes do not spend LLM tokens.
+                    Generate the summary after collection or sentiment analysis. It is cached here so page refreshes do not start a new analysis run.
                   </div>
                 )}
                 {strategy && (
@@ -713,7 +784,7 @@ export default function TopicDetail() {
                       <div key={`${message.createdAt}-${index}`} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
                         <div className={message.role === "user" ? "max-w-[85%] rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" : "max-w-[92%] rounded-md border border-border bg-background px-3 py-2 text-sm"}>
                           <p className="whitespace-pre-wrap leading-6">{message.content}</p>
-                          {message.role === "assistant" && message.llmEnabled === false && <p className="mt-2 text-xs text-muted-foreground">LLM fallback response</p>}
+                          {message.role === "assistant" && message.llmEnabled === false && <p className="mt-2 text-xs text-muted-foreground">Rules-based response</p>}
                         </div>
                       </div>
                     ))}
@@ -749,164 +820,12 @@ export default function TopicDetail() {
           </div>
         </TabsContent>
 
-        <TabsContent value="origins" className="space-y-6 mt-6">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-muted p-2"><Clock3 className="h-4 w-4" /></div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">First seen</p>
-                    <p className="truncate text-sm font-semibold">{originStats.first ? new Date(originStats.first.publishedAt ?? originStats.first.collectedAt).toLocaleString() : "No evidence"}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-muted p-2"><UserRound className="h-4 w-4" /></div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Early profiles</p>
-                    <p className="text-2xl font-semibold tabular-nums">{originStats.uniqueProfiles}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-muted p-2"><Network className="h-4 w-4" /></div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">First-wave spread</p>
-                    <p className="text-2xl font-semibold tabular-nums">{originItems.length > 1 ? `${originStats.spreadMinutes}m` : "-"}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-muted p-2"><AlertTriangle className="h-4 w-4" /></div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Coordination signal</p>
-                    <p className="text-2xl font-semibold tabular-nums">{originStats.coordinationScore}%</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">First 20 profiles that posted</CardTitle>
-              <p className="text-xs text-muted-foreground">Oldest saved mentions for this topic, ranked by first observed post time.</p>
-            </CardHeader>
-            <CardContent>
-              {originItems.length > 0 && (
-                <div className="overflow-hidden rounded-lg border border-border">
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[980px] border-collapse text-sm">
-                      <thead className="bg-muted/70 text-xs text-muted-foreground">
-                        <tr className="h-10 text-left">
-                          <th className="w-12 px-3 font-medium">Rank</th>
-                          <th className="w-48 px-3 font-medium">Profile</th>
-                          <th className="w-28 px-3 font-medium">Platform</th>
-                          <th className="w-44 px-3 font-medium">First post</th>
-                          <th className="px-3 font-medium">Post preview</th>
-                          <th className="w-28 px-3 text-right font-medium">Followers</th>
-                          <th className="w-28 px-3 text-right font-medium">Engage</th>
-                          <th className="w-28 px-3 font-medium">Sentiment</th>
-                          <th className="w-36 px-3 font-medium">Signal</th>
-                          <th className="w-10 px-2" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {originItems.map((mention, index) => {
-                          const normalized = normalizeMentionText(mention.text);
-                          const repeatCount = originTextCounts.get(normalized) ?? 0;
-                          const assessment = originAssessment(mention, repeatCount);
-                          const authorName = mention.author?.displayName ?? mention.author?.username ?? "Unknown profile";
-                          const automationPercent = Math.round((mention.quality?.automationLikelihood ?? 0) * 100);
-                          const expanded = expandedOriginIds.has(mention.id);
-                          return (
-                            <Fragment key={mention.id}>
-                              <tr className={`border-l-4 border-t border-border transition-colors ${originRowTone(assessment.tone)}`}>
-                                <td className="h-12 px-3 align-middle font-semibold tabular-nums">#{index + 1}</td>
-                                <td className="max-w-48 px-3 align-middle">
-                                  <div className="min-w-0">
-                                    <p className="truncate font-medium">{authorName}</p>
-                                    <p className="truncate text-xs text-muted-foreground">{mention.author?.username ? `@${mention.author.username}` : "No username"}</p>
-                                  </div>
-                                </td>
-                                <td className="px-3 align-middle"><PlatformBadge platform={mention.platform} /></td>
-                                <td className="px-3 align-middle text-xs text-muted-foreground">{new Date(mention.publishedAt ?? mention.collectedAt).toLocaleString()}</td>
-                                <td className="max-w-[360px] px-3 align-middle"><p className="truncate">{mention.text}</p></td>
-                                <td className="px-3 text-right align-middle font-medium tabular-nums">{formatCompact(authorFollowers(mention))}</td>
-                                <td className="px-3 text-right align-middle font-medium tabular-nums">{formatCompact(mentionEngagement(mention))}</td>
-                                <td className="px-3 align-middle"><SentimentBadge sentiment={mention.nlp.sentiment} /></td>
-                                <td className="px-3 align-middle">
-                                  <div className="flex flex-col gap-1">
-                                    <Badge variant={assessment.tone} className="w-fit">{assessment.label}</Badge>
-                                    <span className="text-xs text-muted-foreground tabular-nums">Auto {automationPercent}%</span>
-                                  </div>
-                                </td>
-                                <td className="px-2 align-middle">
-                                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => toggleOriginRow(mention.id)} aria-label={expanded ? "Collapse origin row" : "Expand origin row"}>
-                                    {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                                  </Button>
-                                </td>
-                              </tr>
-                              {expanded && (
-                                <tr className={`border-l-4 border-t border-border ${originRowTone(assessment.tone)}`}>
-                                  <td colSpan={10} className="p-4">
-                                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-                                      <div className="space-y-2">
-                                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                          <SentimentBadge sentiment={mention.nlp.sentiment} />
-                                          {repeatCount >= 2 && <Badge variant="secondary">{repeatCount} similar early posts</Badge>}
-                                        </div>
-                                        <p className="text-sm leading-6">{mention.text}</p>
-                                        <p className="text-xs text-muted-foreground">{assessment.note}</p>
-                                      </div>
-                                      <div className="space-y-3 text-xs">
-                                        <div>
-                                          <div className="mb-1 flex items-center justify-between gap-2">
-                                            <span className="text-muted-foreground">Automation likelihood</span>
-                                            <span className="font-medium tabular-nums">{automationPercent}%</span>
-                                          </div>
-                                          <Progress value={automationPercent} />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Similar copy</p><p className="font-semibold tabular-nums">{repeatCount}</p></div>
-                                          <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Sentiment</p><p className="font-semibold capitalize">{mention.nlp.sentiment}</p></div>
-                                        </div>
-                                        {mention.sourceUrl && (
-                                          <Button asChild variant="outline" size="sm" className="w-full justify-center">
-                                            <a href={mention.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-3.5 w-3.5" /> Open post</a>
-                                          </Button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              {originItems.length === 0 && <div className="rounded-lg border border-border p-12 text-center text-sm text-muted-foreground">No origin evidence yet. Run ingestion to collect posts for this topic.</div>}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <TabsContent value="raw" className="space-y-6 mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
-            <div className="text-sm text-muted-foreground">Showing {mentionItems.length} saved mentions</div>
+            <div>
+              <h2 className="text-sm font-semibold">Recent posts</h2>
+              <p className="text-xs text-muted-foreground">Saved public posts, articles, and media for this topic.</p>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <Select value={rawMediaType} onValueChange={(value) => setRawMediaType(value as RawMediaFilter)}>
                 <SelectTrigger className="w-[172px]"><SelectValue /></SelectTrigger>
@@ -927,85 +846,177 @@ export default function TopicDetail() {
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.7fr)_minmax(0,1.3fr)] gap-6">
-            <Card>
-              <CardHeader><CardTitle className="text-base">Raw sentiment count</CardTitle></CardHeader>
-              <CardContent className="h-72">
-                {rawSentimentRows.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={rawSentimentRows} dataKey="value" nameKey="name" outerRadius={90} label>
-                        {rawSentimentRows.map((entry) => <Cell key={entry.key} fill={SENTIMENT_COLORS[entry.key]} />)}
-                      </Pie>
-                      <RTooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No raw sentiment data yet.</div>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">Raw mentions by source</CardTitle></CardHeader>
-              <CardContent className="h-72">
-                {rawPlatformRows.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={rawPlatformRows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="platform" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                      <RTooltip />
-                      <Bar dataKey="count" name="Mentions" fill="#7c3aed" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No source distribution yet.</div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-          {mentionItems.map((m) => (
-            <Card key={m.id}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-3">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <PlatformBadge platform={m.platform} />
-                      <SentimentBadge sentiment={m.nlp.sentiment} />
-                      <Badge variant="outline" className="text-[10px] capitalize">{m.sourceType?.replace("_", " ") ?? "source"}</Badge>
-                      <span>{m.author?.displayName ?? m.author?.username ?? "unknown"}</span>
-                      <span>·</span>
-                      <span>{new Date(m.publishedAt ?? m.collectedAt).toLocaleString()}</span>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {evidenceSummaryCards.map((item) => (
+              <Card key={item.label} className="rounded-lg border-border bg-card shadow-xs">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={`h-4 w-1 rounded-full ${item.accent}`} />
+                      <p className="truncate text-xs font-medium text-foreground">{item.label}</p>
                     </div>
-                    <p className="text-sm">{m.text}</p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {m.sourceUrl && <a href={m.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Open source ↗</a>}
-                      {(m.media ?? []).map((asset) => (
-                        <Badge key={asset.id} variant="outline" className="gap-1 text-[10px] capitalize">
-                          {asset.type === "video" ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
-                          {asset.type} · {asset.status}
-                        </Badge>
-                      ))}
-                    </div>
-                    {(m.media ?? []).some((asset) => asset.summary || asset.error) && (
-                      <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3 text-xs">
-                        {(m.media ?? []).map((asset) => (
-                          <div key={`${asset.id}-summary`} className="space-y-1">
-                            {asset.summary && <p><span className="font-medium">Media summary:</span> {asset.summary}</p>}
-                            {asset.sentiment && <p className="text-muted-foreground">Media sentiment: {asset.sentiment}{typeof asset.sentimentConfidence === "number" ? ` (${Math.round(asset.sentimentConfidence * 100)}%)` : ""}</p>}
-                            {asset.error && <p className="text-destructive">{asset.error}</p>}
-                            {(asset.blobUrl || asset.thumbnailBlobUrl) && <a href={asset.blobUrl ?? asset.thumbnailBlobUrl ?? undefined} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open stored media ↗</a>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <ChevronRight className="h-4 w-4 shrink-0 text-foreground" />
                   </div>
+                  <div className="mt-5 flex items-center gap-2">
+                    <p className="text-3xl font-medium leading-none tracking-normal tabular-nums text-foreground">{item.value}</p>
+                    {item.comparison.direction === "down" ? <TrendingDown className="h-4 w-4 text-red-600" /> : item.comparison.direction === "up" ? <TrendingUp className="h-4 w-4 text-emerald-600" /> : null}
+                  </div>
+                  <p className={item.comparison.direction === "down" ? "mt-4 text-[11px] text-red-600" : item.comparison.direction === "up" ? "mt-4 text-[11px] text-emerald-600" : "mt-4 text-[11px] text-muted-foreground"}>{item.comparison.text}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Previous week: {item.previousValue}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold">Posts table</h3>
+                <p className="text-xs text-muted-foreground">Showing {mentionItems.length} saved items from the current filters.</p>
+              </div>
+              <Badge variant="outline" className="rounded-md">Latest first</Badge>
+            </div>
+            {mentionItems.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1180px] border-collapse text-sm">
+                  <thead className="bg-muted/70 text-xs text-muted-foreground">
+                    <tr className="h-10 text-left">
+                      <th className="w-14 px-3 font-medium">#</th>
+                      <th className="w-28 px-3 font-medium">Source</th>
+                      <th className="w-28 px-3 font-medium">Sentiment</th>
+                      <th className="w-32 px-3 font-medium">Type</th>
+                      <th className="w-44 px-3 font-medium">Author</th>
+                      <th className="w-44 px-3 font-medium">Published</th>
+                      <th className="min-w-[360px] px-3 font-medium">Post</th>
+                      <th className="w-24 px-3 text-right font-medium">Engage</th>
+                      <th className="w-32 px-3 font-medium">Media</th>
+                      <th className="w-28 px-3 font-medium">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mentionItems.map((m, index) => {
+                      const media = m.media ?? [];
+                      const mediaWithNotes = media.filter((asset) => asset.summary || asset.error || asset.blobUrl || asset.thumbnailBlobUrl);
+                      const author = m.author?.displayName ?? m.author?.username ?? "Unknown author";
+                      return (
+                        <tr key={m.id} className="border-t border-border align-top">
+                          <td className="px-3 py-3 text-xs font-medium tabular-nums text-muted-foreground">#{index + 1}</td>
+                          <td className="px-3 py-3"><PlatformBadge platform={m.platform} /></td>
+                          <td className="px-3 py-3"><SentimentBadge sentiment={m.nlp.sentiment} /></td>
+                          <td className="px-3 py-3"><Badge variant="outline" className="rounded-md text-[10px] capitalize">{m.sourceType?.replace("_", " ") ?? "source"}</Badge></td>
+                          <td className="max-w-44 px-3 py-3">
+                            <p className="truncate font-medium">{author}</p>
+                            {m.author?.username && <p className="truncate text-xs text-muted-foreground">@{m.author.username}</p>}
+                          </td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{new Date(m.publishedAt ?? m.collectedAt).toLocaleString()}</td>
+                          <td className="px-3 py-3">
+                            <p className="line-clamp-3 leading-6">{m.text}</p>
+                            {mediaWithNotes.length > 0 && (
+                              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                                {mediaWithNotes.map((asset) => (
+                                  <div key={`${asset.id}-table-summary`}>
+                                    {asset.summary && <p><span className="font-medium text-foreground">Media:</span> {asset.summary}</p>}
+                                    {asset.error && <p className="text-destructive">{asset.error}</p>}
+                                    {(asset.blobUrl || asset.thumbnailBlobUrl) && (
+                                      <a href={asset.blobUrl ?? asset.thumbnailBlobUrl ?? undefined} target="_blank" rel="noreferrer" className="inline-flex items-center text-primary hover:underline"><ExternalLink className="mr-1 h-3 w-3" /> Stored media</a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatCompact(mentionEngagement(m))}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {media.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
+                              {media.map((asset) => (
+                                <Badge key={asset.id} variant="outline" className="gap-1 rounded-md text-[10px] capitalize">
+                                  {asset.type === "video" ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
+                                  {asset.type}
+                                </Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {m.sourceUrl ? (
+                              <Button asChild variant="outline" size="sm">
+                                <a href={m.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-3.5 w-3.5" /> Open</a>
+                              </Button>
+                            ) : <span className="text-xs text-muted-foreground">No link</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {mentionItems.length === 0 && <div className="p-12 text-center text-sm text-muted-foreground">No posts match the current filters.</div>}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="jobs" className="mt-6">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Collect job history</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">Collection runs linked to this topic, latest first.</p>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-          {mentionItems.length === 0 && <Card><CardContent className="p-12 text-center text-muted-foreground">No mentions match the current filters.</CardContent></Card>}
+                <Badge variant="outline" className="rounded-md">{topicCollectionJobs.length} jobs</Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {collectionJobs.isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading collection jobs...</div>}
+              {!collectionJobs.isLoading && topicCollectionJobs.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                    <thead className="bg-muted/70 text-xs text-muted-foreground">
+                      <tr className="h-10 text-left">
+                        <th className="px-3 font-medium">Run</th>
+                        <th className="w-28 px-3 font-medium">Status</th>
+                        <th className="w-28 px-3 font-medium">Source</th>
+                        <th className="w-40 px-3 font-medium">Created</th>
+                        <th className="w-40 px-3 font-medium">Finished</th>
+                        <th className="w-24 px-3 text-right font-medium">Fetched</th>
+                        <th className="w-24 px-3 text-right font-medium">Saved</th>
+                        <th className="w-24 px-3 text-right font-medium">Skipped</th>
+                        <th className="w-24 px-3 text-right font-medium">Errors</th>
+                        <th className="w-24 px-3 font-medium">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topicCollectionJobs.map((job) => (
+                        <tr key={job.id} className="border-t border-border align-middle">
+                          <td className="px-3 py-3">
+                            <p className="font-mono text-xs font-medium">{job.id}</p>
+                            <p className="mt-1 text-xs text-muted-foreground capitalize">{job.jobType ?? "manual"}</p>
+                          </td>
+                          <td className="px-3 py-3"><Badge variant={jobStatusVariant(job.status)} className="rounded-md capitalize">{job.status}</Badge></td>
+                          <td className="px-3 py-3"><Badge variant="outline" className="rounded-md uppercase">{jobPlatform(job)}</Badge></td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{new Date(job.createdAt).toLocaleString()}</td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "-"}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.fetchedCount ?? job.itemsFetched)}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums">{jobStoredCount(job)}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.skippedCount ?? job.itemsDeduped)}</td>
+                          <td className="px-3 py-3 text-right font-medium tabular-nums">{numberOrZero(job.errorCount)}</td>
+                          <td className="px-3 py-3">
+                            <Button asChild variant="outline" size="sm">
+                              <Link to={`/ingestions/form?jobId=${job.id}`}>Open</Link>
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!collectionJobs.isLoading && topicCollectionJobs.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">No collection jobs are linked to this topic yet.</div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="insights" className="space-y-3 mt-6">
@@ -1016,11 +1027,11 @@ export default function TopicDetail() {
                 <p>{i.summary}</p>
                 <div><span className="font-semibold">Why it matters: </span>{i.whyItMatters}</div>
                 <div><span className="font-semibold">Recommendation: </span>{i.recommendation}</div>
-                <div className="text-xs text-muted-foreground">Evidence: {i.evidenceMentionIds.length} mentions · {new Date(i.generatedAt).toLocaleString()}</div>
+                <div className="text-xs text-muted-foreground">Posts: {i.evidenceMentionIds.length} mentions · {new Date(i.generatedAt).toLocaleString()}</div>
               </CardContent>
             </Card>
           ))}
-          {(insights.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No insights yet. Click "Daily brief" to generate one.</CardContent></Card>}
+          {(insights.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No AI insights yet.</CardContent></Card>}
         </TabsContent>
 
         <TabsContent value="issues" className="space-y-6 mt-6">
@@ -1090,52 +1101,167 @@ export default function TopicDetail() {
               </Card>
             );
           })}
-          {(clusters.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No clusters yet. Click "Detect risk" to cluster + analyze.</CardContent></Card>}
+          {(clusters.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No issue clusters yet.</CardContent></Card>}
         </TabsContent>
 
-        <TabsContent value="risk" className="space-y-3 mt-6">
-          {(riskEvents.data ?? []).map((r) => (
-            <Card key={r.id}>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <CardTitle className="text-base">{r.title}</CardTitle>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold tabular-nums">{r.score}</span>
-                    <SeverityBadge severity={r.severity} />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p>{r.summary}</p>
-                <div className="flex flex-wrap gap-1">
-                  {(r.narrativeTags ?? []).map((t) => <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>)}
-                </div>
-                <div className="text-xs text-muted-foreground">Category: {r.category} · Evidence: {r.evidenceMentionIds.length} mentions</div>
-              </CardContent>
-            </Card>
-          ))}
-          {(riskEvents.data ?? []).length === 0 && <Card><CardContent className="p-8 text-center text-muted-foreground">No risk events. Run "Detect risk".</CardContent></Card>}
-        </TabsContent>
-
-        <TabsContent value="entities" className="mt-6">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Top entities</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                {(entities.data ?? []).map((e) => (
-                  <div key={`${e.type}-${e.text}`} className="flex items-center justify-between border border-border rounded-md px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{e.text}</p>
-                      <p className="text-xs text-muted-foreground">{e.type}</p>
-                    </div>
-                    <span className="text-sm font-semibold tabular-nums">{e.count}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
+
+      <Dialog open={originPanelOpen} onOpenChange={setOriginPanelOpen}>
+        <DialogContent className="left-auto right-0 top-0 flex h-full max-w-2xl translate-x-0 translate-y-0 flex-col rounded-none border-y-0 border-r-0 p-0 sm:max-w-2xl">
+          <DialogHeader className="border-b border-border px-6 py-5">
+            <DialogTitle className="flex items-center gap-2">
+              <Network className="h-5 w-5 text-primary" /> Origin details
+            </DialogTitle>
+            <DialogDescription>{originClassification.reason}</DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <div className={`rounded-lg border p-4 ${originBannerTone(originClassification.kind)}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">{originClassification.title}</p>
+                  <p className="mt-1 text-sm opacity-90">Score {originStats.coordinationScore}% from the earliest saved origin posts.</p>
+                </div>
+                <Badge variant={originBadgeVariant(originClassification.kind)} className="rounded-md">{originClassification.label}</Badge>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-md bg-muted p-2"><Clock3 className="h-4 w-4" /></div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">First seen</p>
+                    <p className="truncate text-sm font-semibold">{originStats.first ? new Date(originStats.first.publishedAt ?? originStats.first.collectedAt).toLocaleString() : "No posts"}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-md bg-muted p-2"><UserRound className="h-4 w-4" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Early profiles</p>
+                    <p className="text-xl font-semibold tabular-nums">{originStats.uniqueProfiles}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-md bg-muted p-2"><Network className="h-4 w-4" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">First-wave spread</p>
+                    <p className="text-xl font-semibold tabular-nums">{originItems.length > 1 ? formatSpreadMinutes(originStats.spreadMinutes) : "-"}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-md bg-muted p-2"><AlertTriangle className="h-4 w-4" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Coordination signal</p>
+                    <p className="text-xl font-semibold tabular-nums">{originStats.coordinationScore}%</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <div>
+                  <h3 className="text-sm font-semibold">Origin list</h3>
+                  <p className="text-xs text-muted-foreground">Oldest saved mentions for this topic, showing up to the first 20 posts for each source.</p>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Source</p>
+                    <Select value={originSourceFilter} onValueChange={setOriginSourceFilter}>
+                      <SelectTrigger><SelectValue placeholder="Filter source" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All sources ({originItems.length})</SelectItem>
+                        {originSourceOptions.map((source) => (
+                          <SelectItem key={source.platform} value={source.platform}>{source.platform} ({source.count})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Sentiment</p>
+                    <Select value={originSentimentFilter} onValueChange={(value) => setOriginSentimentFilter(value as "all" | SentimentKey)}>
+                      <SelectTrigger><SelectValue placeholder="Filter sentiment" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All sentiment ({originItems.length})</SelectItem>
+                        {originSentimentOptions.map((sentiment) => (
+                          <SelectItem key={sentiment.sentiment} value={sentiment.sentiment}>{SENTIMENT_LABELS[sentiment.sentiment]} ({sentiment.count})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Signal</p>
+                    <Select value={originSignalFilter} onValueChange={(value) => setOriginSignalFilter(value as OriginSignalFilter)}>
+                      <SelectTrigger><SelectValue placeholder="Filter signal" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All signals ({originItems.length})</SelectItem>
+                        {originSignalOptions.map((signal) => (
+                          <SelectItem key={signal.signal} value={signal.signal}>{originSignalLabels[signal.signal]} ({signal.count})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              {visibleOriginItems.map((mention, index) => {
+                const normalized = normalizeMentionText(mention.text);
+                const repeatCount = originTextCounts.get(normalized) ?? 0;
+                const assessment = originAssessment(mention, repeatCount);
+                const authorName = mention.author?.displayName ?? mention.author?.username ?? "Unknown profile";
+                const automationPercent = Math.round((mention.quality?.automationLikelihood ?? 0) * 100);
+                return (
+                  <div key={mention.id} className={`rounded-lg border border-l-4 border-border p-4 ${originRowTone(assessment.tone)}`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="rounded-md bg-background/70">#{index + 1}</Badge>
+                          <PlatformBadge platform={mention.platform} />
+                          <SentimentBadge sentiment={mention.nlp.sentiment} />
+                          <Badge variant={assessment.tone} className="rounded-md">{assessment.label}</Badge>
+                        </div>
+                        <p className="font-medium">{authorName}</p>
+                        <p className="text-xs text-muted-foreground">{mention.author?.username ? `@${mention.author.username}` : "No username"} · {new Date(mention.publishedAt ?? mention.collectedAt).toLocaleString()}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-right text-xs sm:min-w-44">
+                        <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Followers</p><p className="font-semibold tabular-nums">{formatCompact(authorFollowers(mention))}</p></div>
+                        <div className="rounded-md border border-border bg-background/70 px-2 py-1.5"><p className="text-muted-foreground">Engage</p><p className="font-semibold tabular-nums">{formatCompact(mentionEngagement(mention))}</p></div>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm leading-6">{mention.text}</p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px]">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">Reason</p>
+                        <p className="text-sm">{assessment.note}</p>
+                        {repeatCount >= 2 && <Badge variant="secondary" className="rounded-md">{repeatCount} similar early posts</Badge>}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground">Automation</span>
+                          <span className="font-medium tabular-nums">{automationPercent}%</span>
+                        </div>
+                        <Progress value={automationPercent} />
+                        {mention.sourceUrl && (
+                          <Button asChild variant="outline" size="sm" className="mt-2 w-full justify-center">
+                            <a href={mention.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-3.5 w-3.5" /> Open post</a>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {originItems.length === 0 && <div className="rounded-lg border border-border p-10 text-center text-sm text-muted-foreground">No origin posts yet. Run collection to collect posts for this topic.</div>}
+              {originItems.length > 0 && visibleOriginItems.length === 0 && <div className="rounded-lg border border-border p-10 text-center text-sm text-muted-foreground">No origin posts match the selected filters.</div>}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={operation?.open ?? false} onOpenChange={(open) => setOperation((current) => current ? { ...current, open } : current)}>
         <DialogContent className="left-auto right-0 top-0 h-full max-w-md translate-x-0 translate-y-0 rounded-none border-y-0 border-r-0 sm:max-w-md">

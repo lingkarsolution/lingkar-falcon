@@ -3,6 +3,7 @@ import { connectorRegistry } from '../connectors/registry.js';
 import type { CanonicalMentionDraft, IngestionContext } from '../connectors/types.js';
 import { store } from '../db/store.js';
 import { newId, sha256 } from '../lib/crypto.js';
+import { redactInfrastructureText } from '../lib/publicSources.js';
 import { searchIndonesianNews } from './indonesianNews.js';
 import type { Connector, Mention, Platform, Topic, TrendDiscoverySource, TrendItem, TrendSample, TrendSnapshot } from '../types.js';
 
@@ -29,6 +30,16 @@ type TrendSourceItem = {
 const snapshotId = (tenantId: string) => `trend_snapshot_${tenantId}`;
 
 const now = () => new Date().toISOString();
+
+const publicTrendSnapshot = (snapshot: TrendSnapshot | null): TrendSnapshot | null => snapshot
+  ? {
+      ...snapshot,
+      errors: snapshot.errors.map((error) => ({
+        ...error,
+        message: redactInfrastructureText(error.message) ?? 'Source request failed.',
+      })),
+    }
+  : null;
 
 const connectorEnabled = (tenantId: string, platform: Platform): boolean => {
   const connector = (store.list('connectors') as Connector[]).find((item) => item.tenantId === tenantId && item.platform === platform);
@@ -216,7 +227,7 @@ const fetchConnectorItems = async (tenantId: string, platform: Platform, limit: 
 };
 
 export const latestTrendSnapshot = (tenantId: string): TrendSnapshot | null =>
-  (store.get('trendSnapshots', snapshotId(tenantId)) as TrendSnapshot | undefined) ?? null;
+  publicTrendSnapshot((store.get('trendSnapshots', snapshotId(tenantId)) as TrendSnapshot | undefined) ?? null);
 
 export const refreshTrendSnapshot = async (tenantId: string, options: { platforms?: Platform[]; limitPerPlatform?: number } = {}): Promise<TrendSnapshot> => {
   const platforms = options.platforms?.length ? options.platforms : SOCIAL_PLATFORMS;
@@ -229,7 +240,7 @@ export const refreshTrendSnapshot = async (tenantId: string, options: { platform
       if (platform === 'news') liveItems.push(...await fetchNewsItems(limit));
       else liveItems.push(...await fetchConnectorItems(tenantId, platform, limit));
     } catch (error) {
-      errors.push({ platform, message: (error as Error).message });
+      errors.push({ platform, message: redactInfrastructureText((error as Error).message) ?? 'Source request failed.' });
     }
   }
 
@@ -241,9 +252,7 @@ export const refreshTrendSnapshot = async (tenantId: string, options: { platform
     if (!canRefreshPlatform(tenantId, platform) && platform !== 'news' && platform !== 'reddit') {
       errors.push({
         platform,
-        message: platform === 'facebook' && config.ensembleData.token
-          ? 'Facebook token is empty and EnsembleData does not expose a Facebook search/posts endpoint; showing cached mentions only.'
-          : 'Connector not configured or disabled; showing cached mentions only.',
+        message: 'Source is not configured; showing cached mentions only.',
       });
     }
   }

@@ -14,6 +14,7 @@ import { runIntelligenceCycle } from '../services/intelligenceCycle.js';
 import { evaluateAlerts } from '../services/alerts.js';
 import { refreshActorScores } from '../services/actors.js';
 import { newId } from '../lib/crypto.js';
+import { publicPlatformLabel, redactInfrastructureText } from '../lib/publicSources.js';
 import { audit } from '../services/audit.js';
 import type { Mention, Topic, Connector, RiskEvent, AlertRule, Actor } from '../types.js';
 
@@ -41,7 +42,7 @@ const findTopic = (tenantId: string, idOrTitle: string): Topic | undefined => {
 // 1. search_mentions
 const searchMentions: ToolHandler<{ topicId?: string; query?: string; limit?: number; platform?: string; sentiment?: string }> = {
   name: 'search_mentions',
-  description: 'Search mentions in the CivicFalcon database by topic, text query, platform, or sentiment.',
+  description: 'Search mentions in the OmniSense database by topic, text query, platform, or sentiment.',
   inputSchema: z.object({
     topicId: z.string().optional(),
     query: z.string().optional(),
@@ -77,7 +78,7 @@ const searchMentions: ToolHandler<{ topicId?: string; query?: string; limit?: nu
     return {
       count: list.length,
       items: list.slice(0, input.limit ?? 20).map((m) => ({
-        id: m.id, platform: m.platform, sentiment: m.nlp.sentiment, publishedAt: m.publishedAt,
+        id: m.id, platform: publicPlatformLabel(m.platform), sentiment: m.nlp.sentiment, publishedAt: m.publishedAt,
         author: m.author?.displayName ?? m.author?.username,
         text: m.text.slice(0, 280), url: m.sourceUrl,
       })),
@@ -85,19 +86,28 @@ const searchMentions: ToolHandler<{ topicId?: string; query?: string; limit?: nu
   },
 };
 
+const publicWebSearch = async (query: string, options: Parameters<typeof webSearch>[1]) => {
+  const response = await webSearch(query, options);
+  return {
+    results: response.results.map(({ source: _source, ...result }) => result),
+    errors: response.errors?.map((message) => redactInfrastructureText(message) ?? 'Search source failed.'),
+  };
+};
+
+const publicNewsSearchResult = (result: Awaited<ReturnType<typeof searchGdeltArticles>>) => ({
+  query: result.query,
+  count: result.count,
+  articles: result.articles,
+});
+
 // 2. search_web
-type SearchProviderName = 'auto' | 'searxng' | 'ddg_html' | 'ddg_ia' | 'brave' | 'tavily';
-
-const searchProviderSchema = z.enum(['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily']).default('auto');
-
-const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays?: number; provider?: SearchProviderName }> = {
+const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays?: number }> = {
   name: 'search_web',
-  description: 'Live web search via self-hosted SearXNG first, then DuckDuckGo HTML/Instant Answer as the last automatic fallback. Brave/Tavily are only used when provider is explicitly set. Pass provider="searxng" to force SEARXNG_BASE_URL. Follow with web_fetch when a page needs to be read.',
+  description: 'Live public web search. Follow with web_fetch when a page needs to be read.',
   inputSchema: z.object({
     query: z.string().min(1),
     maxResults: z.number().int().min(1).max(20).default(10),
     freshnessDays: z.number().int().min(1).max(365).optional(),
-    provider: searchProviderSchema.optional(),
   }),
   parameters: {
     type: 'object',
@@ -105,20 +115,18 @@ const searchWeb: ToolHandler<{ query: string; maxResults?: number; freshnessDays
     properties: {
       query: { type: 'string' }, maxResults: { type: 'integer', default: 10 },
       freshnessDays: { type: 'integer' },
-      provider: { type: 'string', enum: ['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily'], default: 'auto' },
     },
   },
-  execute: async (input) => webSearch(input.query, { maxResults: input.maxResults, freshnessDays: input.freshnessDays, provider: input.provider }),
+  execute: async (input) => publicWebSearch(input.query, { maxResults: input.maxResults, freshnessDays: input.freshnessDays }),
 };
 
-const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshnessDays?: number; provider?: SearchProviderName }> = {
+const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshnessDays?: number }> = {
   name: 'web_search',
-  description: 'Search the public web and return ranked {title, url, snippet} results. Auto mode uses configured self-hosted SearXNG first and DuckDuckGo only as the final fallback; pass provider="searxng" to force SEARXNG_BASE_URL. Follow up with web_fetch for the most relevant URL.',
+  description: 'Search the public web and return ranked {title, url, snippet} results. Follow up with web_fetch for the most relevant URL.',
   inputSchema: z.object({
     query: z.string().min(1),
     max_results: z.number().int().min(1).max(15).default(5),
     freshnessDays: z.number().int().min(1).max(365).optional(),
-    provider: searchProviderSchema.optional(),
   }),
   parameters: {
     type: 'object',
@@ -127,10 +135,9 @@ const webSearchAlias: ToolHandler<{ query: string; max_results?: number; freshne
       query: { type: 'string', description: 'Natural language search query' },
       max_results: { type: 'integer', default: 5 },
       freshnessDays: { type: 'integer' },
-      provider: { type: 'string', enum: ['auto', 'searxng', 'ddg_html', 'ddg_ia', 'brave', 'tavily'], default: 'auto' },
     },
   },
-  execute: async (input) => webSearch(input.query, { maxResults: input.max_results, freshnessDays: input.freshnessDays, provider: input.provider }),
+  execute: async (input) => publicWebSearch(input.query, { maxResults: input.max_results, freshnessDays: input.freshnessDays }),
 };
 
 const fetchWebPage: ToolHandler<{ url: string; max_chars?: number }> = {
@@ -154,15 +161,15 @@ const fetchWebPage: ToolHandler<{ url: string; max_chars?: number }> = {
 // 3. search_news (alias for web with news intent)
 const searchNews: ToolHandler<{ query: string; maxResults?: number }> = {
   name: 'search_news',
-  description: 'Search recent news articles via the web search waterfall biased toward news domains.',
+  description: 'Search recent news articles from public web sources.',
   inputSchema: z.object({ query: z.string().min(1), maxResults: z.number().int().min(1).max(20).default(10) }),
   parameters: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, maxResults: { type: 'integer', default: 10 } } },
-  execute: async (input) => webSearch(`${input.query} news`, { maxResults: input.maxResults, freshnessDays: 30, category: 'news' }),
+  execute: async (input) => publicWebSearch(`${input.query} news`, { maxResults: input.maxResults, freshnessDays: 30, category: 'news' }),
 };
 
 const searchGdeltNews: ToolHandler<{ query: string; maxResults?: number; days?: number; dateFrom?: string; dateTo?: string }> = {
   name: 'search_gdelt_news',
-  description: 'Search GDELT DOC 2.0 global news full-text index. Free/no-key OSINT source across translated global coverage; ingestion falls back to SearXNG-first web news search if GDELT is slow or unavailable.',
+  description: 'Search global news coverage from public sources.',
   inputSchema: z.object({
     query: z.string().min(1),
     maxResults: z.number().int().min(1).max(250).default(50),
@@ -174,10 +181,10 @@ const searchGdeltNews: ToolHandler<{ query: string; maxResults?: number; days?: 
     type: 'object',
     required: ['query'],
     properties: {
-      query: { type: 'string', description: 'GDELT query; supports phrases, OR blocks, domain:, sourcelang:, sourcecountry:, theme:, tone filters' },
+      query: { type: 'string', description: 'News search query; supports phrases, OR blocks, domain:, sourcelang:, sourcecountry:, theme:, tone filters' },
       maxResults: { type: 'integer', default: 50 },
       days: { type: 'integer', default: 30, description: 'Lookback window in calendar days, max 90' },
-      dateFrom: { type: 'string', description: 'Optional ISO start datetime; GDELT only supports recent rolling history' },
+      dateFrom: { type: 'string', description: 'Optional ISO start datetime; source coverage supports recent rolling history' },
       dateTo: { type: 'string', description: 'Optional ISO end datetime' },
     },
   },
@@ -191,12 +198,12 @@ const searchGdeltNews: ToolHandler<{ query: string; maxResults?: number; days?: 
         dateTo: input.dateTo,
         sort: 'datedesc',
       });
-      if (result.count > 0) return result;
+      if (result.count > 0) return publicNewsSearchResult(result);
       const fallback = await searchGdeltArticlesFallback({ query: input.query, maxRecords: input.maxResults, timespanDays: input.days });
-      return { ...fallback, fallback: true, primaryCount: 0 };
+      return publicNewsSearchResult(fallback);
     } catch (error) {
       const fallback = await searchGdeltArticlesFallback({ query: input.query, maxRecords: input.maxResults, timespanDays: input.days });
-      return { ...fallback, fallback: true, primaryError: (error as Error).message };
+      return { ...publicNewsSearchResult(fallback), warning: redactInfrastructureText((error as Error).message) ?? 'News search source had limited availability.' };
     }
   },
 };
@@ -246,7 +253,7 @@ const topEntitiesTool: ToolHandler<{ topicId: string; limit?: number }> = {
 // 7. summarize_topic
 const summarizeTopic: ToolHandler<{ topicId: string }> = {
   name: 'summarize_topic',
-  description: 'Generate (or fetch latest) AI daily brief for a topic. Returns title, summary, evidence mention IDs.',
+  description: 'Generate (or fetch latest) AI daily brief for a topic. Returns title, summary, and supporting mention IDs.',
   inputSchema: z.object({ topicId: z.string() }),
   parameters: { type: 'object', required: ['topicId'], properties: { topicId: { type: 'string' } } },
   execute: async (input, ctx) => {
@@ -299,13 +306,13 @@ const listTopics: ToolHandler<{}> = {
 // 11. list_connectors
 const listConnectors: ToolHandler<{}> = {
   name: 'list_connectors',
-  description: 'List all connectors with status, mode, budget.',
+  description: 'List all collection sources with public status and budget.',
   inputSchema: z.object({}),
   parameters: { type: 'object', properties: {} },
   execute: async (_input, ctx) => ({
     connectors: (store.list('connectors') as Connector[])
       .filter((c) => c.tenantId === ctx.tenantId)
-      .map((c) => ({ id: c.id, platform: c.platform, status: c.status, mode: c.mode, enabled: c.enabled, requests: c.currentMonthRequests, spendUsd: c.currentMonthSpendUsd })),
+      .map((c) => ({ id: c.id, source: publicPlatformLabel(c.platform), status: c.status, enabled: c.enabled, checks: c.currentMonthRequests, spendUsd: c.currentMonthSpendUsd })),
   }),
 };
 
@@ -329,7 +336,7 @@ const listRisks: ToolHandler<{ topicId?: string; severity?: string }> = {
 // 13. trigger_ingestion
 const triggerIngestion: ToolHandler<{ topicId: string; platform: string; maxItems?: number; days?: number; dateFrom?: string; dateTo?: string }> = {
   name: 'trigger_ingestion',
-  description: 'Start a manual ingestion job for a topic via a specific connector platform. Supports historical lookback for connectors like GDELT; days defaults to 30 and is capped to 90.',
+  description: 'Start a manual collection job for a topic via a specific public source. Supports historical lookback where available; days defaults to 30 and is capped to 90.',
   inputSchema: z.object({
     topicId: z.string(),
     platform: z.string(),
@@ -469,14 +476,14 @@ const generateReportTool: ToolHandler<{ topicId: string; title?: string; dateFro
 // 18. usage_status
 const usageStatus: ToolHandler<{}> = {
   name: 'usage_status',
-  description: 'Return current connector usage, web-search provider availability, and LLM config status.',
+  description: 'Return current collection source usage and search availability.',
   inputSchema: z.object({}),
   parameters: { type: 'object', properties: {} },
   execute: async (_input, ctx) => ({
     connectors: (store.list('connectors') as Connector[])
       .filter((c) => c.tenantId === ctx.tenantId)
-      .map((c) => ({ platform: c.platform, status: c.status, requests: c.currentMonthRequests, spendUsd: c.currentMonthSpendUsd })),
-    webSearchProviders: searchProvidersStatus(),
+      .map((c) => ({ source: publicPlatformLabel(c.platform), status: c.status, checks: c.currentMonthRequests, spendUsd: c.currentMonthSpendUsd })),
+    searchAvailable: searchProvidersStatus().some((provider) => provider.available),
   }),
 };
 
@@ -578,7 +585,7 @@ const compareEntities: ToolHandler<{ topicId: string; entities: string[] }> = {
 // 23. analyze_topic_sentiment
 const analyzeTopicSentiment: ToolHandler<{ topicId: string; limit?: number }> = {
   name: 'analyze_topic_sentiment',
-  description: 'Run bulk LLM sentiment analysis for saved mentions in a topic and persist the updated sentiment fields.',
+  description: 'Run bulk AI sentiment analysis for saved mentions in a topic and persist the updated sentiment fields.',
   inputSchema: z.object({ topicId: z.string(), limit: z.number().int().min(1).max(250).default(100) }),
   parameters: { type: 'object', required: ['topicId'], properties: { topicId: { type: 'string' }, limit: { type: 'integer', default: 100 } } },
   requiresRole: 'analyst',
@@ -592,7 +599,7 @@ const analyzeTopicSentiment: ToolHandler<{ topicId: string; limit?: number }> = 
 // 24. run_intelligence_cycle
 const runCycleTool: ToolHandler<{ topicId: string; days?: number; maxItemsPerConnector?: number; includeTrendingNews?: boolean }> = {
   name: 'run_intelligence_cycle',
-  description: 'Run the full OSINT intelligence cycle for a topic: ingestion, Indonesian trending-news web aggregation, bulk LLM sentiment, clustering, risk detection, and daily brief.',
+  description: 'Run the full OSINT intelligence cycle for a topic: collection, Indonesian trending-news aggregation, bulk AI sentiment, clustering, risk detection, and daily brief.',
   inputSchema: z.object({
     topicId: z.string(),
     days: z.number().int().min(1).max(90).default(30),

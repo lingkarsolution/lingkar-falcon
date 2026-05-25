@@ -5,8 +5,10 @@ import AppLayout from "@/components/layout/AppLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Topics from "@/pages/Topics";
+import TopicForm from "@/pages/TopicForm";
 import TopicDetail from "@/pages/TopicDetail";
 import Connectors from "@/pages/Connectors";
+import IngestionForm from "@/pages/IngestionForm";
 import IngestionJobs from "@/pages/IngestionJobs";
 import Alerts from "@/pages/Alerts";
 import Reports from "@/pages/Reports";
@@ -25,10 +27,13 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="topics" element={<Topics />} />
+            <Route path="topics/form" element={<TopicForm />} />
+            <Route path="topics/form/:id" element={<TopicForm />} />
             <Route path="topics/:id" element={<TopicDetail />} />
             <Route path="actors" element={<Actors />} />
             <Route path="connectors" element={<Connectors />} />
             <Route path="ingestion" element={<IngestionJobs />} />
+            <Route path="ingestions/form" element={<IngestionForm />} />
             <Route path="alerts" element={<Alerts />} />
             <Route path="reports" element={<Reports />} />
             <Route path="commander" element={<Commander />} />

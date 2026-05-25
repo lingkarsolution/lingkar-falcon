@@ -1,19 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, AtSign, CalendarClock, ChevronDown, ChevronRight, Hash, Instagram, MessageCircle, Music2, Newspaper, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, Youtube, type LucideIcon } from "lucide-react";
-import { api, type IndonesianNewsSearchResult, type Platform, type Topic, type TrendItem, type TrendSnapshot } from "@/lib/api";
+import { AlertCircle, AtSign, CalendarClock, ChevronDown, ChevronRight, Hash, Instagram, MessageCircle, Music2, Newspaper, Pencil, Plus, RefreshCw, Sparkles, Trash2, Youtube, type LucideIcon } from "lucide-react";
+import { api, type Platform, type Topic, type TrendItem, type TrendSnapshot } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 
 const trendPlatforms: Platform[] = ["x", "threads", "tiktok", "instagram", "youtube", "facebook", "reddit", "news"];
@@ -42,13 +37,12 @@ function PlatformMark({ platform, className = "h-4 w-4" }: { platform: Platform;
 const sourceLabels = {
   cached_mentions: "Cached mentions",
   public_search: "Public search",
-  connector: "Connector",
-  ensembledata: "EnsembleData",
+  connector: "Collected source",
+  ensembledata: "Social signals",
   mixed: "Mixed sources",
 } as const;
 
 const formatDateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : "Not available";
-type DescriptionTarget = "create" | "edit";
 
 function TopicRow({ topic, onEdit, onDelete }: { topic: Topic; onEdit: (topic: Topic) => void; onDelete: (topic: Topic) => void }) {
   return (
@@ -126,31 +120,9 @@ export default function Topics() {
   const navigate = useNavigate();
   const { data: topics = [] } = useQuery({ queryKey: qk.topics, queryFn: () => api.get<Topic[]>("/topics") });
   const { data: trendSnapshot } = useQuery({ queryKey: qk.trends, queryFn: () => api.get<TrendSnapshot | null>("/trends") });
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [keywords, setKeywords] = useState("");
-  const [historyDays, setHistoryDays] = useState("30");
-  const [includeTrendingNews, setIncludeTrendingNews] = useState(true);
-  const [trendingQuery, setTrendingQuery] = useState("");
-  const [previewQuery, setPreviewQuery] = useState("");
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(trendPlatforms);
   const [collapsedPlatforms, setCollapsedPlatforms] = useState<Platform[]>([]);
-  const [editingTopic, setEditingTopic] = useState<Topic | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
   const [deletingTopic, setDeletingTopic] = useState<Topic | null>(null);
-  const [generatingDescriptionFor, setGeneratingDescriptionFor] = useState<DescriptionTarget | null>(null);
-
-  const keywordList = useMemo(() => keywords.split(",").map((k) => k.trim()).filter(Boolean), [keywords]);
-  const discoveryQuery = (trendingQuery.trim() || keywordList.join(" ") || title.trim()).trim();
-  const canCreateTopic = title.trim().length >= 2 && description.trim().length > 0 && keywordList.length > 0;
-  const canUpdateTopic = editTitle.trim().length >= 2 && editDescription.trim().length > 0;
-  const trendingPreview = useQuery({
-    queryKey: ["topic-trending-news", previewQuery],
-    queryFn: () => api.get<IndonesianNewsSearchResult>(`/topics/trending-news?query=${encodeURIComponent(previewQuery)}&maxResults=6`),
-    enabled: open && includeTrendingNews && previewQuery.length > 1,
-  });
 
   const refreshTrends = useMutation({
     mutationFn: () => api.post<TrendSnapshot>("/trends/refresh", { limitPerPlatform: 10 }),
@@ -166,20 +138,6 @@ export default function Topics() {
     },
   });
 
-  const generateDescription = useMutation({
-    mutationFn: (payload: { title: string; target: DescriptionTarget }) => api.post<{ description: string; llmEnabled: boolean; generatedAt: string }>("/ai/topic-description", { title: payload.title.trim() }),
-    onMutate: (payload) => {
-      setGeneratingDescriptionFor(payload.target);
-    },
-    onSuccess: (result, payload) => {
-      if (payload.target === "create") setDescription(result.description);
-      else setEditDescription(result.description);
-    },
-    onSettled: () => {
-      setGeneratingDescriptionFor(null);
-    },
-  });
-
   const availableTrendPlatforms = trendSnapshot?.platforms?.length ? trendSnapshot.platforms : trendPlatforms;
   const visibleTrendPlatforms = availableTrendPlatforms.filter((platform) => selectedPlatforms.includes(platform));
   const togglePlatform = (platform: Platform) => {
@@ -189,42 +147,7 @@ export default function Topics() {
     setCollapsedPlatforms((current) => current.includes(platform) ? current.filter((item) => item !== platform) : [...current, platform]);
   };
 
-  const create = useMutation({
-    mutationFn: () => api.post<Topic>("/topics", {
-      title: title.trim(),
-      description: description.trim(),
-      keywords: keywordList,
-      historyDays: Number(historyDays),
-      ingestTrendingNews: includeTrendingNews,
-      trendingNewsQuery: discoveryQuery,
-      trendingNewsMaxItems: 24,
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.topics });
-      setOpen(false); setTitle(""); setDescription(""); setKeywords(""); setTrendingQuery(""); setPreviewQuery("");
-      setHistoryDays("30"); setIncludeTrendingNews(true);
-    },
-  });
-
-  const startEditTopic = (topic: Topic) => {
-    setEditingTopic(topic);
-    setEditTitle(topic.title);
-    setEditDescription(topic.description ?? "");
-  };
-
-  const updateTopic = useMutation({
-    mutationFn: () => api.patch<Topic>(`/topics/${editingTopic!.id}`, {
-      title: editTitle.trim(),
-      description: editDescription.trim(),
-    }),
-    onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: qk.topics });
-      qc.invalidateQueries({ queryKey: qk.topic(updated.id) });
-      setEditingTopic(null);
-      setEditTitle("");
-      setEditDescription("");
-    },
-  });
+  const startEditTopic = (topic: Topic) => navigate(`/topics/form/${topic.id}`);
 
   const deleteTopic = useMutation({
     mutationFn: () => api.delete<{ deleted: string }>(`/topics/${deletingTopic!.id}`),
@@ -242,120 +165,15 @@ export default function Topics() {
           <h1 className="text-3xl font-semibold tracking-tight">Topics</h1>
           <p className="text-muted-foreground mt-1">Monitor known conversations or discover emerging trends before tracking them.</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" /> New Topic</Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader><DialogTitle>Create topic</DialogTitle></DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2"><Label htmlFor="topic-title">Title</Label><Input id="topic-title" value={title} onChange={(e) => setTitle(e.target.value)} required /></div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="topic-description">Description</Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => generateDescription.mutate({ title, target: "create" })}
-                    disabled={title.trim().length < 2 || generateDescription.isPending}
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    {generatingDescriptionFor === "create" ? "Generating…" : "Generate"}
-                  </Button>
-                </div>
-                <Textarea id="topic-description" value={description} onChange={(e) => setDescription(e.target.value)} required />
-                {generateDescription.isError && open && <p className="text-sm text-destructive">{generateDescription.error instanceof Error ? generateDescription.error.message : "Could not generate description."}</p>}
-              </div>
-              <div className="space-y-2"><Label>Keywords (comma-separated)</Label><Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="economy, inflation, jobs" /></div>
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Newspaper className="h-4 w-4 text-primary" />
-                    <Label htmlFor="trending-news">Indonesian trending news</Label>
-                  </div>
-                  <Switch id="trending-news" checked={includeTrendingNews} onCheckedChange={setIncludeTrendingNews} />
-                </div>
-                {includeTrendingNews && (
-                  <div className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-[1fr_130px_auto]">
-                      <Input value={trendingQuery} onChange={(e) => setTrendingQuery(e.target.value)} placeholder="Use topic keywords" />
-                      <Select value={historyDays} onValueChange={setHistoryDays}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {[7, 14, 30, 60, 90].map((days) => <SelectItem key={days} value={String(days)}>{days} days</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Button type="button" variant="outline" onClick={() => setPreviewQuery(discoveryQuery)} disabled={!discoveryQuery || trendingPreview.isFetching}>
-                        <Search className="h-4 w-4 mr-2" /> Preview
-                      </Button>
-                    </div>
-                    {trendingPreview.isFetching && <p className="text-sm text-muted-foreground">Searching Indonesian sources…</p>}
-                    {(trendingPreview.data?.results ?? []).length > 0 && (
-                      <div className="space-y-2">
-                        {trendingPreview.data!.results.slice(0, 4).map((item) => (
-                          <a key={item.url} href={item.url} target="_blank" rel="noreferrer" className="block rounded-md border border-border bg-background px-3 py-2 text-sm hover:border-primary">
-                            <span className="font-medium line-clamp-1">{item.title}</span>
-                            <span className="text-xs text-muted-foreground">{item.sourceDomain}</span>
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                    {trendingPreview.data && trendingPreview.data.results.length === 0 && <p className="text-sm text-muted-foreground">No results returned for this query.</p>}
-                  </div>
-                )}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={() => create.mutate()} disabled={!canCreateTopic || create.isPending}>{create.isPending ? "Creating…" : "Create"}</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Button asChild><Link to="/topics/form"><Plus className="h-4 w-4 mr-2" /> New Topic</Link></Button>
       </div>
-
-      <Dialog open={Boolean(editingTopic)} onOpenChange={(nextOpen) => { if (!nextOpen) setEditingTopic(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit monitored topic</DialogTitle>
-            <DialogDescription>Update the topic title and analyst-facing description.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-topic-title">Title</Label>
-              <Input id="edit-topic-title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="edit-topic-description">Description</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => generateDescription.mutate({ title: editTitle, target: "edit" })}
-                  disabled={editTitle.trim().length < 2 || generateDescription.isPending}
-                >
-                  <Sparkles className="h-4 w-4" />
-                  {generatingDescriptionFor === "edit" ? "Generating…" : "Generate"}
-                </Button>
-              </div>
-              <Textarea id="edit-topic-description" value={editDescription} onChange={(event) => setEditDescription(event.target.value)} className="min-h-28" required />
-              {generateDescription.isError && Boolean(editingTopic) && <p className="text-sm text-destructive">{generateDescription.error instanceof Error ? generateDescription.error.message : "Could not generate description."}</p>}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditingTopic(null)}>Cancel</Button>
-            <Button onClick={() => updateTopic.mutate()} disabled={!canUpdateTopic || updateTopic.isPending}>{updateTopic.isPending ? "Saving…" : "Save changes"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={Boolean(deletingTopic)} onOpenChange={(nextOpen) => { if (!nextOpen) setDeletingTopic(null); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete monitored topic</DialogTitle>
             <DialogDescription>
-              This removes “{deletingTopic?.title}” from monitored topics. Existing stored evidence may remain in the data store, but this topic will no longer appear in the list.
+              This removes “{deletingTopic?.title}” from monitored topics. Existing collected posts may remain in the data store, but this topic will no longer appear in the list.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -392,7 +210,7 @@ export default function Topics() {
             <CardHeader className="gap-4 space-y-0 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <CardTitle className="text-base flex items-center gap-2"><Sparkles className="h-4 w-4" /> Trending Topics</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Cached discovery grouped by platform. External APIs only run when Refresh is clicked.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Cached discovery grouped by platform. Live source refresh only runs when Refresh is clicked.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {trendSnapshot?.generatedAt && (

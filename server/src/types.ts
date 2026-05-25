@@ -10,6 +10,12 @@ export type SourceType =
 export type Sentiment = 'positive' | 'negative' | 'neutral' | 'mixed' | 'unknown';
 export type TopicStatus = 'active' | 'paused' | 'archived';
 export type Role = 'admin' | 'analyst' | 'viewer';
+export type TopicSubjectType = 'public_figure' | 'organization' | 'issue' | 'group' | 'brand' | 'event' | 'normal_user' | 'general';
+export type TopicMonitoringObjective = 'reputation' | 'early_warning' | 'sentiment' | 'misinformation' | 'campaign' | 'competitor' | 'complaints';
+export type TopicPerspectiveRole = 'topic_owner' | 'government' | 'opposition' | 'public' | 'competitor' | 'media' | 'neutral_observer' | 'custom';
+export type TopicGeoMode = 'mentioned' | 'author' | 'both';
+export type TopicRelevanceMode = 'broad' | 'balanced' | 'strict';
+export type TopicCostMode = 'free_only' | 'balanced' | 'manual_paid';
 
 export type ConnectorMode = 'free' | 'official_api' | 'paid_api' | 'scraper' | 'manual_import' | 'disabled';
 export type ConnectorStatus = 'active' | 'limited' | 'disabled' | 'failed' | 'budget_exceeded' | 'not_configured';
@@ -30,11 +36,63 @@ export type User = {
   role: Role; passwordHash: string; createdAt: string; updatedAt: string;
 };
 
+export type TopicMonitoringBrief = {
+  setupMode?: 'simple' | 'advanced';
+  subjectType?: TopicSubjectType;
+  objectives: TopicMonitoringObjective[];
+  perspective: {
+    role: TopicPerspectiveRole;
+    name?: string | null;
+    description?: string | null;
+    favorableSignals: string[];
+    unfavorableSignals: string[];
+  };
+  query: {
+    includeKeywords: string[];
+    exactPhrases: string[];
+    hashtags: string[];
+    handles: string[];
+    relatedEntities: string[];
+    excludeKeywords: string[];
+    excludeHashtags: string[];
+    excludeHandles: string[];
+    excludeDomains: string[];
+  };
+  sources: {
+    platforms: Platform[];
+    languages: string[];
+    countries: string[];
+    provinces: string[];
+    cities: string[];
+    geoMode: TopicGeoMode;
+  };
+  audience: {
+    types: string[];
+    minimumFollowers?: number | null;
+    verifiedOnly: boolean;
+    includeLowFollowerAccounts: boolean;
+  };
+  relevance: {
+    mode: TopicRelevanceMode;
+    aiReviewEnabled: boolean;
+  };
+  collection: {
+    lookbackDays: number;
+    refreshMinutes: number;
+    maxItemsPerConnector: number;
+    costMode: TopicCostMode;
+  };
+  alerts: {
+    triggers: string[];
+  };
+};
+
 export type Topic = {
   id: string; tenantId: string; title: string;
   description?: string | null; category?: string | null;
   keywords: string[]; excludeKeywords: string[];
   platforms: Platform[]; languages: string[]; regions: string[];
+  monitoringBrief?: TopicMonitoringBrief | null;
   status: TopicStatus;
   collectionFrequencyMinutes?: number | null;
   intelligenceSettings?: {
@@ -263,6 +321,63 @@ export type IngestionJob = {
   createdAt: string;
 };
 
+export type IngestionJobProgressItem = {
+  id: string;
+  platform: Platform;
+  sourceType: SourceType;
+  title?: string | null;
+  textPreview?: string | null;
+  sourceUrl?: string | null;
+  status: 'retrieved' | 'reviewing' | 'accepted' | 'rejected' | 'stored' | 'duplicate' | 'error';
+  reason?: string | null;
+  relevanceScore?: number | null;
+  reviewSource?: 'llm' | 'heuristic' | null;
+};
+
+export type IngestionJobProgressBatch = {
+  page: number;
+  requested: number;
+  retrieved: number;
+  processed: number;
+  accepted: number;
+  rejected: number;
+  stored: number;
+  duplicates: number;
+  startedAt: string;
+  finishedAt?: string | null;
+};
+
+export type IngestionJobLlmStream = {
+  status: 'idle' | 'streaming' | 'completed' | 'failed' | 'fallback';
+  phase: 'pre_ingestion_review' | 'sentiment';
+  title: string;
+  batch: number;
+  totalBatches: number;
+  candidates: number;
+  text: string;
+  error?: string | null;
+  startedAt?: string | null;
+  updatedAt: string;
+};
+
+export type IngestionJobProgress = {
+  stage: 'queued' | 'fetching' | 'reviewing' | 'persisting' | 'enriching' | 'completed' | 'failed';
+  platform: Platform;
+  currentPage: number;
+  maxItemsPerSource: number;
+  retrievedLimit: number;
+  retrievedCount: number;
+  processedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  storedCount: number;
+  duplicateCount: number;
+  currentItems: IngestionJobProgressItem[];
+  batches: IngestionJobProgressBatch[];
+  llmStream?: IngestionJobLlmStream | null;
+  updatedAt: string;
+};
+
 export type IngestionJobError = {
   id: string; tenantId: string; ingestionJobId: string;
   errorCode?: string | null; message: string;
@@ -306,6 +421,9 @@ export type Mention = {
     isDuplicate: boolean; duplicateOfId?: string | null;
     isIrrelevant: boolean; relevanceScore?: number | null;
     automationLikelihood?: number | null; sourceReliability?: number | null;
+    reviewSource?: 'llm' | 'heuristic' | null;
+    reviewReason?: string | null;
+    rejectionReason?: string | null;
   };
   geo?: MentionGeoSummary | null;
   rawPayloadRef?: string | null;

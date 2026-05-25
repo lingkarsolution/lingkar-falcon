@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { sha256 } from '../lib/crypto.js';
+import { redactInfrastructureText } from '../lib/publicSources.js';
 import { webSearch, type SearchResult } from '../connectors/search/router.js';
 import type { CanonicalMentionDraft } from '../connectors/types.js';
 
@@ -142,7 +143,7 @@ export const searchIndonesianNews = async (input: {
       region: 'id-ID',
       cacheTtlSec: 1800,
     });
-    if (response.errors?.length) errors.push(...response.errors.map((error) => `${sourceDomain}: ${error}`));
+    if (response.errors?.length) errors.push(...response.errors.map((error) => `${sourceDomain}: ${redactInfrastructureText(error) ?? 'Search source failed.'}`));
     return response.results
       .map((result) => ({ ...result, sourceDomain: hostFor(result.url) || sourceDomain, searchQuery }))
       .filter((result) => matchesSource(result.sourceDomain, sourceDomain));
@@ -151,7 +152,7 @@ export const searchIndonesianNews = async (input: {
   const deduped = new Map<string, IndonesianNewsItem>();
   for (const item of settled) {
     if (item.status === 'rejected') {
-      errors.push((item.reason as Error).message);
+      errors.push(redactInfrastructureText((item.reason as Error).message) ?? 'Search source failed.');
       continue;
     }
     for (const result of item.value) {
@@ -170,7 +171,7 @@ export const searchIndonesianNews = async (input: {
         region: 'id-ID',
         cacheTtlSec: 1800,
       });
-      if (broad.errors?.length) errors.push(...broad.errors.map((error) => `broad: ${error}`));
+      if (broad.errors?.length) errors.push(...broad.errors.map((error) => redactInfrastructureText(error) ?? 'Search source failed.'));
       for (const result of broad.results) {
         if (!result.url || deduped.has(result.url)) continue;
         const sourceDomain = hostFor(result.url);
@@ -182,7 +183,7 @@ export const searchIndonesianNews = async (input: {
         });
       }
     } catch (error) {
-      errors.push((error as Error).message);
+      errors.push(redactInfrastructureText((error as Error).message) ?? 'Search source failed.');
     }
   }
 
@@ -197,7 +198,7 @@ export const searchIndonesianNews = async (input: {
   return {
     query,
     sources,
-    providerPriority: ['searxng', 'ddg_html', 'ddg_ia'],
+    providerPriority: ['public_web'],
     results: [...deduped.values()].slice(0, maxResults),
     errors,
   };

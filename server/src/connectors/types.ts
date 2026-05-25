@@ -19,6 +19,9 @@ export type IngestionContext = {
   languages?: string[]; regions?: string[];
   dateFrom?: string; dateTo?: string;
   maxItems: number;
+  pageOffset?: number;
+  pageSize?: number;
+  rawLimit?: number;
   connectorConfig?: Record<string, unknown>;
 };
 

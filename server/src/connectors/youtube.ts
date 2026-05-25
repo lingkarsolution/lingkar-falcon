@@ -1,5 +1,4 @@
-// YouTube Data API v3 — requires YOUTUBE_API_KEY.
-// https://developers.google.com/youtube/v3/docs/search/list
+// YouTube connector.
 import { config } from '../config.js';
 import { sha256 } from '../lib/crypto.js';
 import { cache } from '../lib/cache.js';
@@ -7,14 +6,14 @@ import type { SourceConnector, CanonicalMentionDraft, IngestionContext, Connecto
 import { ensembleDataConfigured, ensembleDataHealth, fetchEnsembleYouTubeMentions } from './ensembledata.js';
 
 const testOfficialYouTube = async (): Promise<ConnectorHealth> => {
-  if (!config.youtube.apiKey) return { ok: false, status: 'not_configured', message: 'Set YOUTUBE_API_KEY or ENSEMBLEDATA_TOKEN' };
+  if (!config.youtube.apiKey) return { ok: false, status: 'not_configured', message: 'Source is not configured.' };
   try {
     const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&maxResults=1&key=${config.youtube.apiKey}`;
     const r = await fetch(url);
-    if (!r.ok) return { ok: false, status: 'failed', message: `YouTube HTTP ${r.status}` };
-    return { ok: true, status: 'active', message: 'YouTube official API reachable' };
+    if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+    return { ok: true, status: 'active', message: 'YouTube source reachable.' };
   } catch (e) {
-    return { ok: false, status: 'failed', message: `YouTube error: ${(e as Error).message}` };
+    return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
   }
 };
 
@@ -34,7 +33,7 @@ const fetchOfficialYouTubeMentions = async (ctx: IngestionContext): Promise<Cano
   let data: any = cache.get(key);
   if (!data) {
     const r = await fetch(url.toString());
-    if (!r.ok) throw new Error(`YouTube HTTP ${r.status}`);
+    if (!r.ok) throw new Error('Source request failed.');
     data = await r.json();
     cache.set(key, data, 900);
   }
@@ -78,7 +77,7 @@ export const youtubeConnector: SourceConnector = {
       const ensemble = await ensembleDataHealth('YouTube');
       if (ensemble.ok || !config.youtube.apiKey) return ensemble;
       const official = await testOfficialYouTube();
-      if (official.ok) return { ...official, message: `${ensemble.message}; official YouTube fallback reachable` };
+      if (official.ok) return { ...official, message: 'YouTube source reachable.' };
       return ensemble;
     }
     return testOfficialYouTube();

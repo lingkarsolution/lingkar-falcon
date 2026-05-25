@@ -18,6 +18,7 @@ export const listMentionsForTopic = (
 ): Mention[] =>
   store.list('mentions').filter((m: any) =>
     m.tenantId === tenantId && m.topicId === topicId &&
+    !m.quality?.isIrrelevant &&
     (range.from || range.to ? inRange(m.publishedAt ?? m.collectedAt, range) : true),
   ) as Mention[];
 
@@ -69,7 +70,7 @@ export const topEntities = (mentions: Mention[], k = 10) => {
 
 export const dashboardSummary = (tenantId: string, topicIds?: string[]) => {
   const allMentions = store.list('mentions').filter((m: any) =>
-    m.tenantId === tenantId && (topicIds ? topicIds.includes(m.topicId) : true),
+    m.tenantId === tenantId && !m.quality?.isIrrelevant && (topicIds ? topicIds.includes(m.topicId) : true),
   ) as Mention[];
 
   const last24h = allMentions.filter((m) => {

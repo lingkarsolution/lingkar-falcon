@@ -20,10 +20,10 @@ export const rssConnector: SourceConnector = {
   async testConnection(): Promise<ConnectorHealth> {
     try {
       const r = await fetch(DEFAULT_FEEDS[0]!);
-      if (!r.ok) return { ok: false, status: 'failed', message: `RSS HTTP ${r.status}` };
-      return { ok: true, status: 'active', message: 'RSS reachable' };
+      if (!r.ok) return { ok: false, status: 'failed', message: 'Source request failed.' };
+      return { ok: true, status: 'active', message: 'RSS source reachable.' };
     } catch (e) {
-      return { ok: false, status: 'failed', message: `RSS error: ${(e as Error).message}` };
+      return { ok: false, status: 'failed', message: `Source request failed: ${(e as Error).message}` };
     }
   },
 
