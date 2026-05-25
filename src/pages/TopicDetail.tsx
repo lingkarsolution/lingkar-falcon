@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Fragment, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Progress } from "@/components/ui/progress";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar, CartesianGrid } from "recharts";
-import { AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronRight, Clock3, ExternalLink, FileText, ImageIcon, Loader2, MapPinned, MessagesSquare, Network, Play, RefreshCw, Send, Sparkles, Shield, UserRound, Video, XCircle } from "lucide-react";
+import { AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronRight, Clock3, ExternalLink, FileText, ImageIcon, Loader2, MapPinned, MessagesSquare, Network, Pencil, Play, RefreshCw, Send, Sparkles, Shield, UserRound, Video, XCircle } from "lucide-react";
 import { api, type BulkSentimentResult, type IngestionJob, type IngestionJobDetail, type IntelligenceCycleResult, type Topic, type Mention, type Insight, type IssueCluster, type RiskEvent, type Connector, type TopicSentimentStrategy } from "@/lib/api";
 import { qk } from "@/lib/queryKeys";
 import "leaflet/dist/leaflet.css";
@@ -396,6 +396,9 @@ export default function TopicDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to={`/topics/form/${topic.data.id}`}><Pencil className="h-4 w-4 mr-2" /> Update topic</Link>
+          </Button>
           <Select value={connectorId} onValueChange={setConnectorId}>
             <SelectTrigger className="w-[200px]"><SelectValue placeholder="Choose connector" /></SelectTrigger>
             <SelectContent>{enabledConnectors.map((c) => <SelectItem key={c.id} value={c.id}>{c.displayName ?? c.name ?? c.platform}</SelectItem>)}</SelectContent>

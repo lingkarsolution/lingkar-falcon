@@ -10,6 +10,7 @@ import { analyzeMentionsSentimentBulk } from './sentiment.js';
 import { enrichMentionsGeo } from './geoEnrichment.js';
 import { reviewDraftsBeforeIngestion, type ReviewedMentionDraft } from './preIngestionReview.js';
 import { enqueueMediaEnrichment } from './mediaEnrichment.js';
+import { topicExcludeTerms, topicIncludeTerms } from './topicBriefContext.js';
 import type {
   Connector, IngestionJob, IngestionJobItemOutcome, IngestionJobItemOutcomeReasonCode, IngestionJobItemOutcomeStatus, IngestionJobType, Mention, MentionMediaAsset, Topic,
 } from '../types.js';
@@ -184,7 +185,7 @@ const ingestDrafts = (topic: Topic, drafts: ReviewedMentionDraft[]): { inserted:
       },
       quality: {
         isDuplicate: false, isIrrelevant: false,
-        relevanceScore: review?.relevanceScore ?? computeRelevanceScore(text, topic.keywords, topic.excludeKeywords),
+        relevanceScore: review?.relevanceScore ?? computeRelevanceScore(text, topicIncludeTerms(topic), topicExcludeTerms(topic)),
         automationLikelihood: computeAutomationLikelihood(text, metrics),
         sourceReliability: 0.7,
       },

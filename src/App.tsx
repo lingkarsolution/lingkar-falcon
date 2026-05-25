@@ -5,6 +5,7 @@ import AppLayout from "@/components/layout/AppLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Topics from "@/pages/Topics";
+import TopicForm from "@/pages/TopicForm";
 import TopicDetail from "@/pages/TopicDetail";
 import Connectors from "@/pages/Connectors";
 import IngestionJobs from "@/pages/IngestionJobs";
@@ -25,6 +26,8 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="topics" element={<Topics />} />
+            <Route path="topics/form" element={<TopicForm />} />
+            <Route path="topics/form/:id" element={<TopicForm />} />
             <Route path="topics/:id" element={<TopicDetail />} />
             <Route path="actors" element={<Actors />} />
             <Route path="connectors" element={<Connectors />} />

@@ -2,7 +2,8 @@
 import { store } from '../db/store.js';
 import { newId } from '../lib/crypto.js';
 import { chatCompletion, llmAvailable } from '../commander/llm.js';
-import type { Insight, Mention, TopicSentimentStrategy } from '../types.js';
+import type { Insight, Mention, Topic, TopicSentimentStrategy } from '../types.js';
+import { topicBriefForLlm, topicObjectiveGuidance } from './topicBriefContext.js';
 
 const now = () => new Date().toISOString();
 
@@ -15,8 +16,30 @@ const parseJsonOutput = (content: string): unknown => {
   throw new Error('LLM returned non-JSON daily brief output');
 };
 
+const mentionForLlm = (mention: Mention, index: number) => ({
+  index: index + 1,
+  id: mention.id,
+  platform: mention.platform,
+  sourceType: mention.sourceType,
+  sentiment: mention.nlp.sentiment,
+  sentimentConfidence: mention.nlp.sentimentConfidence ?? null,
+  sentimentSource: mention.nlp.sentimentSource ?? null,
+  author: mention.author ? {
+    username: mention.author.username,
+    displayName: mention.author.displayName,
+    followersCount: mention.author.followersCount ?? null,
+    verified: mention.author.verified ?? null,
+  } : null,
+  metrics: mention.metrics,
+  geo: mention.geo ?? null,
+  quality: mention.quality,
+  publishedAt: mention.publishedAt ?? mention.collectedAt,
+  title: mention.title ?? null,
+  text: mention.text.slice(0, 360),
+});
+
 export const generateDailyBrief = async (tenantId: string, topicId: string): Promise<Insight | null> => {
-  const topic = store.get('topics', topicId);
+  const topic = store.get('topics', topicId) as Topic | undefined;
   if (!topic) return null;
   const mentions = (store.list('mentions') as Mention[])
     .filter((m) => m.tenantId === tenantId && m.topicId === topicId)
@@ -24,9 +47,9 @@ export const generateDailyBrief = async (tenantId: string, topicId: string): Pro
     .slice(0, 25);
   if (mentions.length === 0) return null;
 
-  const evidence = mentions.map((m, i) => `[${i + 1}] (${m.platform}, ${m.nlp.sentiment}) ${m.text.slice(0, 200)}`).join('\n');
-  const sys = `You are an analyst producing a daily public-narrative brief. Output STRICT JSON with keys: title, summary, whyItMatters, recommendation, evidenceIndexes (array of [1..N] referencing provided mentions). Be specific, cite evidence, no preamble.`;
-  const user = `Topic: ${topic.title}\nKeywords: ${topic.keywords.join(', ')}\n\nMentions:\n${evidence}\n\nWrite the brief now.`;
+  const evidence = mentions.map(mentionForLlm);
+  const sys = 'You are an analyst producing a daily public-narrative brief. Use the complete topic brief object, including subject type, monitoring objectives, objective guidance, stakeholder POV, include/exclude rules, geo/audience scope, alert triggers, relevance mode, and collection/cost rules. Interpret sentiment and risk from the configured stakeholder POV. Output STRICT JSON with keys: title, summary, whyItMatters, recommendation, evidenceIndexes (array of 1-based indexes referencing provided mentions). Be specific, cite evidence, no preamble.';
+  const user = JSON.stringify({ topic: topicBriefForLlm(topic), mentions: evidence });
 
   let parsed: any = null;
   try {
@@ -41,8 +64,8 @@ export const generateDailyBrief = async (tenantId: string, topicId: string): Pro
     parsed = {
       title: `Daily Brief: ${topic.title}`,
       summary: `Activity captured across ${new Set(mentions.map((m) => m.platform)).size} platforms with ${mentions.length} recent mentions. Sentiment skews ${dominantSentiment(mentions)}.`,
-      whyItMatters: 'Recent volume suggests ongoing public attention; monitor for escalation.',
-      recommendation: 'Review top mentions; assess if any rise to risk-event threshold.',
+      whyItMatters: topicObjectiveGuidance(topic)[0] ?? 'Recent volume suggests ongoing public attention; monitor for escalation.',
+      recommendation: 'Review top mentions against the configured POV, include/exclude rules, alert triggers, and objective-specific escalation criteria.',
       evidenceIndexes: mentions.slice(0, 5).map((_, i) => i + 1),
     };
   }
@@ -86,7 +109,7 @@ export const getLatestSentimentStrategy = (tenantId: string, topicId: string): T
 };
 
 export const generateSentimentStrategy = async (tenantId: string, topicId: string): Promise<TopicSentimentStrategy | null> => {
-  const topic: any = store.get('topics', topicId);
+  const topic = store.get('topics', topicId) as Topic | undefined;
   if (!topic) return null;
   const mentions = (store.list('mentions') as Mention[])
     .filter((mention) => mention.tenantId === tenantId && mention.topicId === topicId)
@@ -101,7 +124,7 @@ export const generateSentimentStrategy = async (tenantId: string, topicId: strin
     ...positiveMentions.slice(0, 18),
     ...neutralMentions.slice(0, 12),
   ].slice(0, 60);
-  const evidence = evidenceSample.map((mention, index) => `[${index + 1}] id=${mention.id} platform=${mention.platform} sentiment=${mention.nlp.sentiment} author=${mention.author?.displayName ?? mention.author?.username ?? 'unknown'} text=${mention.text.slice(0, 260)}`).join('\n');
+  const evidence = evidenceSample.map(mentionForLlm);
 
   let parsed: any = null;
   if (llmAvailable()) {
@@ -113,11 +136,16 @@ export const generateSentimentStrategy = async (tenantId: string, topicId: strin
         messages: [
           {
             role: 'system',
-            content: 'You are a senior public relations and civic narrative analyst. Return strict JSON with keys: negative {title, summary, concerns, evidenceIndexes}, positive {title, summary, excitementDrivers, evidenceIndexes}, prStrategy {title, recommendation, actions, tone}. concerns, excitementDrivers, and actions must be arrays of short strings. Be specific and grounded in the provided posts. The PR strategy must counter-react negative sentiment without sounding defensive.',
+            content: 'You are a senior public relations, public affairs, and civic narrative analyst. Use the complete topic brief object: subject type, monitoring objectives, objective guidance, stakeholder POV, favorable/unfavorable signals, include/exclude rules, geo/audience scope, alert triggers, relevance mode, and collection/cost mode. In this output, negative means unfavorable or risky from the configured POV; positive means favorable or useful from that POV. Return strict JSON with keys: negative {title, summary, concerns, evidenceIndexes}, positive {title, summary, excitementDrivers, evidenceIndexes}, prStrategy {title, recommendation, actions, tone}. concerns, excitementDrivers, and actions must be arrays of short strings. Be specific and grounded in the provided posts and the topic brief. The strategy must serve the configured POV and monitoring objectives without sounding defensive.',
           },
           {
             role: 'user',
-            content: `Topic: ${topic.title}\nKeywords: ${(topic.keywords ?? []).join(', ')}\nCounts: negative/mixed=${negativeMentions.length}, positive=${positiveMentions.length}, neutral=${neutralMentions.length}\n\nPosts:\n${evidence}\n\nSummarize what people are worried about, what people care about or are excited about, and recommend a PR response strategy.`,
+            content: JSON.stringify({
+              topic: topicBriefForLlm(topic),
+              counts: { negativeOrMixed: negativeMentions.length, positive: positiveMentions.length, neutral: neutralMentions.length },
+              posts: evidence,
+              task: 'Summarize what is unfavorable, what is favorable or useful, and recommend a response strategy aligned with the configured POV and objectives.',
+            }),
           },
         ],
       });
@@ -187,7 +215,7 @@ export const chatAboutTopicSentiment = async (params: {
   message: string;
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }): Promise<{ answer: string; llmEnabled: boolean; generatedAt: string }> => {
-  const topic: any = store.get('topics', params.topicId);
+  const topic = store.get('topics', params.topicId) as Topic | undefined;
   if (!topic) throw new Error('Topic not found');
   const mentions = (store.list('mentions') as Mention[])
     .filter((mention) => mention.tenantId === params.tenantId && mention.topicId === params.topicId)
@@ -197,7 +225,7 @@ export const chatAboutTopicSentiment = async (params: {
     counts[mention.nlp.sentiment] = (counts[mention.nlp.sentiment] ?? 0) + 1;
     return counts;
   }, {});
-  const evidence = mentions.slice(0, 50).map((mention, index) => `[${index + 1}] ${mention.platform} ${mention.nlp.sentiment} author=${mention.author?.displayName ?? mention.author?.username ?? 'unknown'} text=${mention.text.slice(0, 240)}`).join('\n');
+  const evidence = mentions.slice(0, 50).map(mentionForLlm);
 
   if (!llmAvailable()) {
     return {
@@ -213,11 +241,16 @@ export const chatAboutTopicSentiment = async (params: {
     messages: [
       {
         role: 'system',
-        content: 'You are a senior PR, public affairs, and social intelligence advisor. Discuss the monitored topic with the user. Be practical, evidence-grounded, and concise. You may draft PR statements, holding statements, action plans, wait/escalate recommendations, talking points, or decision criteria. Do not claim certainty beyond the provided evidence. If asked whether to wait, explain what evidence would justify waiting versus responding now.',
+        content: 'You are a senior PR, public affairs, and social intelligence advisor. Discuss the monitored topic with the user. You must honor the complete topic brief: subject type, monitoring objectives, objective guidance, stakeholder POV, favorable/unfavorable signals, include/exclude rules, geo/audience scope, alert triggers, relevance mode, and collection/cost mode. Interpret sentiment and recommendations from the configured POV, not generic tone. Be practical, evidence-grounded, and concise. You may draft PR statements, holding statements, action plans, wait/escalate recommendations, talking points, or decision criteria. Do not claim certainty beyond the provided evidence. If asked whether to wait, explain what evidence would justify waiting versus responding now based on the configured objectives and alert triggers.',
       },
       {
         role: 'user',
-        content: `Topic: ${topic.title}\nDescription: ${topic.description ?? ''}\nKeywords: ${(topic.keywords ?? []).join(', ')}\nSentiment counts: ${JSON.stringify(sentimentCounts)}\nLatest strategy summary: ${strategy ? JSON.stringify(strategy).slice(0, 4000) : 'No generated sentiment strategy yet.'}\nRecent evidence posts:\n${evidence || 'No saved posts yet.'}`,
+        content: JSON.stringify({
+          topic: topicBriefForLlm(topic),
+          sentimentCounts,
+          latestStrategy: strategy ?? null,
+          recentEvidence: evidence,
+        }).slice(0, 9000),
       },
       ...((params.history ?? []).slice(-8).map((turn) => ({ role: turn.role, content: turn.content.slice(0, 1500) })) as Array<{ role: 'user' | 'assistant'; content: string }>),
       { role: 'user', content: params.message },

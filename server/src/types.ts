@@ -10,6 +10,12 @@ export type SourceType =
 export type Sentiment = 'positive' | 'negative' | 'neutral' | 'mixed' | 'unknown';
 export type TopicStatus = 'active' | 'paused' | 'archived';
 export type Role = 'admin' | 'analyst' | 'viewer';
+export type TopicSubjectType = 'public_figure' | 'organization' | 'issue' | 'group' | 'brand' | 'event' | 'normal_user' | 'general';
+export type TopicMonitoringObjective = 'reputation' | 'early_warning' | 'sentiment' | 'misinformation' | 'campaign' | 'competitor' | 'complaints';
+export type TopicPerspectiveRole = 'topic_owner' | 'government' | 'opposition' | 'public' | 'competitor' | 'media' | 'neutral_observer' | 'custom';
+export type TopicGeoMode = 'mentioned' | 'author' | 'both';
+export type TopicRelevanceMode = 'broad' | 'balanced' | 'strict';
+export type TopicCostMode = 'free_only' | 'balanced' | 'manual_paid';
 
 export type ConnectorMode = 'free' | 'official_api' | 'paid_api' | 'scraper' | 'manual_import' | 'disabled';
 export type ConnectorStatus = 'active' | 'limited' | 'disabled' | 'failed' | 'budget_exceeded' | 'not_configured';
@@ -30,11 +36,63 @@ export type User = {
   role: Role; passwordHash: string; createdAt: string; updatedAt: string;
 };
 
+export type TopicMonitoringBrief = {
+  setupMode?: 'simple' | 'advanced';
+  subjectType?: TopicSubjectType;
+  objectives: TopicMonitoringObjective[];
+  perspective: {
+    role: TopicPerspectiveRole;
+    name?: string | null;
+    description?: string | null;
+    favorableSignals: string[];
+    unfavorableSignals: string[];
+  };
+  query: {
+    includeKeywords: string[];
+    exactPhrases: string[];
+    hashtags: string[];
+    handles: string[];
+    relatedEntities: string[];
+    excludeKeywords: string[];
+    excludeHashtags: string[];
+    excludeHandles: string[];
+    excludeDomains: string[];
+  };
+  sources: {
+    platforms: Platform[];
+    languages: string[];
+    countries: string[];
+    provinces: string[];
+    cities: string[];
+    geoMode: TopicGeoMode;
+  };
+  audience: {
+    types: string[];
+    minimumFollowers?: number | null;
+    verifiedOnly: boolean;
+    includeLowFollowerAccounts: boolean;
+  };
+  relevance: {
+    mode: TopicRelevanceMode;
+    aiReviewEnabled: boolean;
+  };
+  collection: {
+    lookbackDays: number;
+    refreshMinutes: number;
+    maxItemsPerConnector: number;
+    costMode: TopicCostMode;
+  };
+  alerts: {
+    triggers: string[];
+  };
+};
+
 export type Topic = {
   id: string; tenantId: string; title: string;
   description?: string | null; category?: string | null;
   keywords: string[]; excludeKeywords: string[];
   platforms: Platform[]; languages: string[]; regions: string[];
+  monitoringBrief?: TopicMonitoringBrief | null;
   status: TopicStatus;
   collectionFrequencyMinutes?: number | null;
   intelligenceSettings?: {
